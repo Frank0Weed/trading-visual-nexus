@@ -1,4 +1,3 @@
-
 import { format } from 'date-fns';
 
 // API base URL
@@ -32,6 +31,7 @@ export interface CandleData {
   tick_volume: number;
   spread: number;
   real_volume?: number;
+  volume?: number; // Added volume field to support both formats
 }
 
 // API functions
@@ -78,7 +78,8 @@ export const fetchCandles = async (
   end?: Date
 ): Promise<CandleData[]> => {
   try {
-    let url = `${API_BASE_URL}/candles/${symbol}/${timeframe}?limit=${limit}`;
+    // Try the OHLCV endpoint first as suggested by the user
+    let url = `${API_BASE_URL}/ohlcv/${symbol}/${timeframe}?limit=${limit}`;
     
     if (start) {
       url += `&start=${format(start, "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'")}`;
@@ -89,9 +90,26 @@ export const fetchCandles = async (
     }
     
     // Log the URL to debug the API call
-    console.log(`Fetching candles from: ${url}`);
+    console.log(`Fetching candles from OHLCV endpoint: ${url}`);
     
-    const response = await fetch(url);
+    let response = await fetch(url);
+    
+    // If the OHLCV endpoint fails, fall back to the candles endpoint
+    if (!response.ok) {
+      console.log(`OHLCV endpoint failed with status ${response.status}, trying candles endpoint`);
+      url = `${API_BASE_URL}/candles/${symbol}/${timeframe}?limit=${limit}`;
+      
+      if (start) {
+        url += `&start=${format(start, "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'")}`;
+      }
+      
+      if (end) {
+        url += `&end=${format(end, "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'")}`;
+      }
+      
+      console.log(`Fetching candles from alternative endpoint: ${url}`);
+      response = await fetch(url);
+    }
     
     if (!response.ok) {
       const text = await response.text();
@@ -100,10 +118,21 @@ export const fetchCandles = async (
     }
     
     const data = await response.json();
-    return Array.isArray(data) ? data : [];
+    
+    if (!Array.isArray(data)) {
+      console.error('API did not return an array:', data);
+      throw new Error('API did not return an array');
+    }
+    
+    console.log(`Received ${data.length} candles`, data.length > 0 ? data[0] : 'no data');
+    
+    // Map the data to ensure it has volume field
+    return data.map((candle: any) => ({
+      ...candle,
+      volume: candle.volume || candle.tick_volume || candle.real_volume || 0
+    }));
   } catch (error) {
     console.error(`Failed to fetch candles for ${symbol} ${timeframe}:`, error);
-    // Don't use mock data, just throw the error
     throw error;
   }
 };
