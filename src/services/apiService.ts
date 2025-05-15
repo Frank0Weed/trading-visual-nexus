@@ -51,10 +51,46 @@ export const fetchTimeframes = async (): Promise<TimeFrame[]> => {
   try {
     const response = await fetch(`${API_BASE_URL}/timeframes`);
     const data = await response.json();
-    return data.timeframes.map((tf: string) => ({
-      name: tf,
-      label: tf
-    }));
+    
+    // Map timeframes to more descriptive labels
+    return data.timeframes.map((tf: string) => {
+      let label = tf;
+      
+      // Create human-readable labels
+      switch (tf) {
+        case 'M1':
+          label = '1 Min';
+          break;
+        case 'M5':
+          label = '5 Min';
+          break;
+        case 'M15':
+          label = '15 Min';
+          break;
+        case 'M30':
+          label = '30 Min';
+          break;
+        case 'H1':
+          label = '1 Hour';
+          break;
+        case 'D1':
+          label = 'Daily';
+          break;
+        case 'W1':
+          label = 'Weekly';
+          break;
+        case 'MN1':
+          label = 'Monthly';
+          break;
+        default:
+          label = tf;
+      }
+      
+      return {
+        name: tf,
+        label: label
+      };
+    });
   } catch (error) {
     console.error('Failed to fetch timeframes:', error);
     throw error;
@@ -79,7 +115,7 @@ export const fetchCandles = async (
   end?: Date
 ): Promise<CandleData[]> => {
   try {
-    // Try the OHLCV endpoint first as suggested by the user
+    // Always use the OHLCV endpoint as it seems to be working
     let url = `${API_BASE_URL}/ohlcv/${symbol}/${timeframe}?limit=${limit}`;
     
     if (start) {
@@ -91,26 +127,10 @@ export const fetchCandles = async (
     }
     
     // Log the URL to debug the API call
+    console.log(`Fetching candles for ${symbol} ${timeframe}`);
     console.log(`Fetching candles from OHLCV endpoint: ${url}`);
     
-    let response = await fetch(url);
-    
-    // If the OHLCV endpoint fails, fall back to the candles endpoint
-    if (!response.ok) {
-      console.log(`OHLCV endpoint failed with status ${response.status}, trying candles endpoint`);
-      url = `${API_BASE_URL}/candles/${symbol}/${timeframe}?limit=${limit}`;
-      
-      if (start) {
-        url += `&start=${format(start, "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'")}`;
-      }
-      
-      if (end) {
-        url += `&end=${format(end, "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'")}`;
-      }
-      
-      console.log(`Fetching candles from alternative endpoint: ${url}`);
-      response = await fetch(url);
-    }
+    const response = await fetch(url);
     
     if (!response.ok) {
       const text = await response.text();

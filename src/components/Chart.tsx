@@ -140,6 +140,7 @@ const Chart: React.FC<ChartProps> = ({
     });
     
     // Configure the price scale for the volume series separately
+    // Using priceScale().applyOptions() instead of direct scaleMargins to fix TS error
     volumeSeries.priceScale().applyOptions({
       scaleMargins: {
         top: 0.8, // Volume appears at the bottom 20% of the chart
