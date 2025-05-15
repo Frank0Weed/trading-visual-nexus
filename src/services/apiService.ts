@@ -1,3 +1,4 @@
+
 import { format } from 'date-fns';
 
 // API base URL
@@ -119,15 +120,18 @@ export const fetchCandles = async (
     
     const data = await response.json();
     
-    if (!Array.isArray(data)) {
+    // Check if the response contains a candles property (API returns an object with a candles array)
+    const candlesArray = data.candles || data;
+    
+    if (!Array.isArray(candlesArray)) {
       console.error('API did not return an array:', data);
       throw new Error('API did not return an array');
     }
     
-    console.log(`Received ${data.length} candles`, data.length > 0 ? data[0] : 'no data');
+    console.log(`Received ${candlesArray.length} candles`, candlesArray.length > 0 ? candlesArray[0] : 'no data');
     
     // Map the data to ensure it has volume field
-    return data.map((candle: any) => ({
+    return candlesArray.map((candle: any) => ({
       ...candle,
       volume: candle.volume || candle.tick_volume || candle.real_volume || 0
     }));
