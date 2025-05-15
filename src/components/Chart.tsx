@@ -138,6 +138,7 @@ const Chart: React.FC<ChartProps> = ({
       },
       priceScaleId: '',
       // Volume appears at the bottom 20% of the chart
+      // Fix: Use the correct property structure for histogram series options
       scaleMargins: {
         top: 0.8,
         bottom: 0,
