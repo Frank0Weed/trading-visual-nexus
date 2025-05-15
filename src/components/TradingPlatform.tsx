@@ -17,13 +17,32 @@ import {
   TimeFrame
 } from '../services/apiService';
 
+// Helper function to format candle data to match Chart component requirements
+const formatCandleData = (candles: CandleData[]) => {
+  return candles.map(candle => {
+    // Convert time to UTC timestamp in seconds if it's a string
+    const timeValue = typeof candle.time === 'string' 
+      ? new Date(candle.time).getTime() / 1000
+      : candle.time;
+      
+    return {
+      time: timeValue,
+      open: candle.open,
+      high: candle.high,
+      low: candle.low,
+      close: candle.close,
+      volume: candle.tick_volume
+    };
+  });
+};
+
 const TradingPlatform: React.FC = () => {
   const [symbols, setSymbols] = useState<string[]>([]);
   const [timeframes, setTimeframes] = useState<TimeFrame[]>([]);
   const [selectedSymbol, setSelectedSymbol] = useState<string>('XAUUSD');
   const [selectedTimeframe, setSelectedTimeframe] = useState<string>('1m');
   const [chartType, setChartType] = useState<ChartType>('candlestick');
-  const [candles, setCandles] = useState<CandleData[]>([]);
+  const [candles, setCandles] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [prices, setPrices] = useState<Record<string, PriceData>>({});
 
@@ -81,7 +100,8 @@ const TradingPlatform: React.FC = () => {
       try {
         setIsLoading(true);
         const data = await fetchCandles(selectedSymbol, selectedTimeframe, 500);
-        setCandles(data);
+        // Format the data to match Chart component requirements
+        setCandles(formatCandleData(data));
         setIsLoading(false);
       } catch (error) {
         console.error('Error fetching candles:', error);
