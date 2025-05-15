@@ -1,13 +1,13 @@
 
 import React, { useRef, useEffect, useState } from 'react';
-import { createChart, CrosshairMode, IChartApi, ISeriesApi, CandlestickData, HistogramData, LineData } from 'lightweight-charts';
+import { createChart, CrosshairMode, IChartApi, ISeriesApi, Time, CandlestickData, HistogramData, LineData } from 'lightweight-charts';
 import { cn } from '@/lib/utils';
 import { CandleData } from '@/services/apiService';
 
 export type ChartType = 'candlestick' | 'line' | 'bar' | 'area';
 
 interface ChartProps {
-  data: CandleData[];
+  data: CandlestickData<Time>[] | LineData<Time>[];
   symbol: string;
   timeframe: string;
   chartType: ChartType;
@@ -35,29 +35,15 @@ const Chart: React.FC<ChartProps> = ({
 
   const [isInitialized, setIsInitialized] = useState(false);
 
-  // Function to format data based on chart type
-  const formatChartData = () => {
-    if (!data || data.length === 0) return [];
-
-    return data.map(candle => ({
-      time: typeof candle.time === 'string' ? new Date(candle.time).getTime() / 1000 : candle.time,
-      open: candle.open,
-      high: candle.high,
-      low: candle.low,
-      close: candle.close,
-      value: candle.close, // For line charts
-    }));
-  };
-
   // Format volume data
   const formatVolumeData = () => {
     if (!data || data.length === 0) return [];
 
-    return data.map(candle => {
+    return data.map((candle: any) => {
       const color = candle.close >= candle.open ? 'rgba(38, 166, 154, 0.5)' : 'rgba(239, 83, 80, 0.5)';
       return {
-        time: typeof candle.time === 'string' ? new Date(candle.time).getTime() / 1000 : candle.time,
-        value: candle.tick_volume || 0,
+        time: candle.time,
+        value: candle.volume || 0,
         color
       };
     });
@@ -108,7 +94,6 @@ const Chart: React.FC<ChartProps> = ({
       },
     });
 
-    const formattedData = formatChartData();
     let series;
 
     // Create series based on chart type
@@ -120,7 +105,7 @@ const Chart: React.FC<ChartProps> = ({
         wickUpColor: '#26a69a',
         wickDownColor: '#ef5350',
       });
-      series.setData(formattedData as CandlestickData[]);
+      series.setData(data as CandlestickData<Time>[]);
     } else if (chartType === 'line') {
       series = chart.addLineSeries({
         color: '#2962FF',
@@ -128,13 +113,13 @@ const Chart: React.FC<ChartProps> = ({
         crosshairMarkerVisible: true,
         crosshairMarkerRadius: 4,
       });
-      series.setData(formattedData.map(d => ({ time: d.time, value: d.close })) as LineData[]);
+      series.setData(data as LineData<Time>[]);
     } else if (chartType === 'bar') {
       series = chart.addBarSeries({
         upColor: '#26a69a',
         downColor: '#ef5350',
       });
-      series.setData(formattedData as CandlestickData[]);
+      series.setData(data as CandlestickData<Time>[]);
     } else if (chartType === 'area') {
       series = chart.addAreaSeries({
         topColor: 'rgba(41, 98, 255, 0.28)',
@@ -142,7 +127,7 @@ const Chart: React.FC<ChartProps> = ({
         lineColor: '#2962FF',
         lineWidth: 2,
       });
-      series.setData(formattedData.map(d => ({ time: d.time, value: d.close })) as LineData[]);
+      series.setData(data as LineData<Time>[]);
     }
 
     // Add volume histogram
@@ -152,12 +137,16 @@ const Chart: React.FC<ChartProps> = ({
         type: 'volume',
       },
       priceScaleId: '',
-      scaleMargins: {
-        top: 0.8,
-        bottom: 0,
+      // Volume appears at the bottom 20% of the chart
+      priceScale: {
+        scaleMargins: {
+          top: 0.8,
+          bottom: 0,
+        },
       },
     });
-    volumeSeries.setData(formatVolumeData() as HistogramData[]);
+    
+    volumeSeries.setData(formatVolumeData() as HistogramData<Time>[]);
 
     seriesRef.current = series || null;
     volumeSeriesRef.current = volumeSeries;
@@ -190,23 +179,20 @@ const Chart: React.FC<ChartProps> = ({
         chartRef.current = null;
       }
     };
-  }, [chartType, height]);
+  }, [chartType, height, data]);
 
   // Update data when it changes
   useEffect(() => {
     if (!isInitialized || !seriesRef.current || !volumeSeriesRef.current || !data.length) return;
 
-    const formattedData = formatChartData();
-    const volumeData = formatVolumeData();
-
     if (chartType === 'candlestick' || chartType === 'bar') {
-      seriesRef.current.setData(formattedData as CandlestickData[]);
+      seriesRef.current.setData(data as CandlestickData<Time>[]);
     } else {
-      seriesRef.current.setData(formattedData.map(d => ({ time: d.time, value: d.close })) as LineData[]);
+      seriesRef.current.setData(data as LineData<Time>[]);
     }
 
-    volumeSeriesRef.current.setData(volumeData as HistogramData[]);
-  }, [data, isInitialized]);
+    volumeSeriesRef.current.setData(formatVolumeData() as HistogramData<Time>[]);
+  }, [data, isInitialized, chartType]);
 
   return (
     <div

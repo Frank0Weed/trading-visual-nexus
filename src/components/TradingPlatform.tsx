@@ -16,9 +16,10 @@ import {
   PriceData,
   TimeFrame
 } from '../services/apiService';
+import { CandlestickData, LineData, Time } from 'lightweight-charts';
 
 // Helper function to format candle data to match Chart component requirements
-const formatCandleData = (candles: CandleData[]) => {
+const formatCandleData = (candles: CandleData[]): (CandlestickData<Time> | LineData<Time>)[] => {
   return candles.map(candle => {
     // Convert time to UTC timestamp in seconds if it's a string
     const timeValue = typeof candle.time === 'string' 
@@ -26,7 +27,7 @@ const formatCandleData = (candles: CandleData[]) => {
       : candle.time;
       
     return {
-      time: timeValue,
+      time: timeValue as Time,
       open: candle.open,
       high: candle.high,
       low: candle.low,
@@ -40,9 +41,9 @@ const TradingPlatform: React.FC = () => {
   const [symbols, setSymbols] = useState<string[]>([]);
   const [timeframes, setTimeframes] = useState<TimeFrame[]>([]);
   const [selectedSymbol, setSelectedSymbol] = useState<string>('XAUUSD');
-  const [selectedTimeframe, setSelectedTimeframe] = useState<string>('1m');
+  const [selectedTimeframe, setSelectedTimeframe] = useState<string>('M1'); // Using M1 format based on API response
   const [chartType, setChartType] = useState<ChartType>('candlestick');
-  const [candles, setCandles] = useState<any[]>([]);
+  const [candles, setCandles] = useState<(CandlestickData<Time> | LineData<Time>)[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [prices, setPrices] = useState<Record<string, PriceData>>({});
 
@@ -99,12 +100,14 @@ const TradingPlatform: React.FC = () => {
     const loadCandles = async () => {
       try {
         setIsLoading(true);
+        console.log(`Fetching candles for ${selectedSymbol} ${selectedTimeframe}`);
         const data = await fetchCandles(selectedSymbol, selectedTimeframe, 500);
         // Format the data to match Chart component requirements
-        setCandles(formatCandleData(data));
+        const formattedData = formatCandleData(data);
+        setCandles(formattedData);
         setIsLoading(false);
       } catch (error) {
-        console.error('Error fetching candles:', error);
+        console.error(`Error fetching candles for ${selectedSymbol} ${selectedTimeframe}:`, error);
         toast.error(`Failed to load ${selectedSymbol} chart data`);
         setIsLoading(false);
       }

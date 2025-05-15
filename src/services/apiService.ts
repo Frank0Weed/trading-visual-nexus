@@ -34,67 +34,15 @@ export interface CandleData {
   real_volume?: number;
 }
 
-// Mock data generation for development (when API is not available)
-export const generateMockCandles = (
-  symbol: string,
-  timeframe: string,
-  count: number = 100
-): CandleData[] => {
-  const candles: CandleData[] = [];
-  const now = new Date();
-  let basePrice = symbol.includes('XAU') ? 2000 : 1.2;
-  const volatility = symbol.includes('XAU') ? 20 : 0.01;
-
-  // Adjust the time increment based on timeframe
-  const getTimeIncrement = () => {
-    switch (timeframe) {
-      case '1m': return 60 * 1000;
-      case '5m': return 5 * 60 * 1000;
-      case '15m': return 15 * 60 * 1000;
-      case '1h': return 60 * 60 * 1000;
-      case '4h': return 4 * 60 * 60 * 1000;
-      case '1d': return 24 * 60 * 60 * 1000;
-      default: return 60 * 1000;
-    }
-  };
-
-  const timeIncrement = getTimeIncrement();
-
-  for (let i = count - 1; i >= 0; i--) {
-    const time = new Date(now.getTime() - (i * timeIncrement));
-    const change = (Math.random() - 0.5) * volatility;
-    const open = basePrice;
-    const close = basePrice + change;
-    const high = Math.max(open, close) + (Math.random() * volatility * 0.5);
-    const low = Math.min(open, close) - (Math.random() * volatility * 0.5);
-    
-    candles.push({
-      time: Math.floor(time.getTime() / 1000),
-      open,
-      high,
-      low,
-      close,
-      tick_volume: Math.floor(Math.random() * 1000) + 100,
-      spread: symbol.includes('XAU') ? 0.5 : 0.0002,
-      real_volume: Math.floor(Math.random() * 10000) + 1000
-    });
-    
-    basePrice = close; // Use the close as the next open
-  }
-  
-  return candles;
-};
-
 // API functions
 export const fetchSymbols = async (): Promise<string[]> => {
   try {
     const response = await fetch(`${API_BASE_URL}/symbols`);
     const data = await response.json();
-    return data.symbols;
+    return data.symbols || [];
   } catch (error) {
     console.error('Failed to fetch symbols:', error);
-    // Return mock symbols
-    return ["EURUSD", "GBPUSD", "USDJPY", "XAUUSD", "BTCUSD", "US30", "US500"];
+    throw error;
   }
 };
 
@@ -104,19 +52,11 @@ export const fetchTimeframes = async (): Promise<TimeFrame[]> => {
     const data = await response.json();
     return data.timeframes.map((tf: string) => ({
       name: tf,
-      label: tf.toUpperCase()
+      label: tf
     }));
   } catch (error) {
     console.error('Failed to fetch timeframes:', error);
-    // Return mock timeframes
-    return [
-      { name: "1m", label: "1M" },
-      { name: "5m", label: "5M" },
-      { name: "15m", label: "15M" },
-      { name: "1h", label: "1H" },
-      { name: "4h", label: "4H" },
-      { name: "1d", label: "1D" }
-    ];
+    throw error;
   }
 };
 
@@ -126,16 +66,7 @@ export const fetchLivePrice = async (symbol: string): Promise<PriceData> => {
     return await response.json();
   } catch (error) {
     console.error(`Failed to fetch price for ${symbol}:`, error);
-    // Return mock price
-    const basePrice = symbol.includes('XAU') ? 2000 : 1.2;
-    const spread = symbol.includes('XAU') ? 0.5 : 0.0002;
-    return {
-      symbol,
-      time: Math.floor(Date.now() / 1000),
-      bid: basePrice,
-      ask: basePrice + spread,
-      spread
-    };
+    throw error;
   }
 };
 
@@ -157,12 +88,23 @@ export const fetchCandles = async (
       url += `&end=${format(end, "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'")}`;
     }
     
+    // Log the URL to debug the API call
+    console.log(`Fetching candles from: ${url}`);
+    
     const response = await fetch(url);
-    return await response.json();
+    
+    if (!response.ok) {
+      const text = await response.text();
+      console.error(`API Error (${response.status}): ${text}`);
+      throw new Error(`API returned ${response.status}: ${text}`);
+    }
+    
+    const data = await response.json();
+    return Array.isArray(data) ? data : [];
   } catch (error) {
     console.error(`Failed to fetch candles for ${symbol} ${timeframe}:`, error);
-    // Return mock candles
-    return generateMockCandles(symbol, timeframe, limit);
+    // Don't use mock data, just throw the error
+    throw error;
   }
 };
 
