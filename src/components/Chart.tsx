@@ -138,11 +138,9 @@ const Chart: React.FC<ChartProps> = ({
       },
       priceScaleId: '',
       // Volume appears at the bottom 20% of the chart
-      priceScale: {
-        scaleMargins: {
-          top: 0.8,
-          bottom: 0,
-        },
+      scaleMargins: {
+        top: 0.8,
+        bottom: 0,
       },
     });
     

@@ -19,22 +19,38 @@ import {
 import { CandlestickData, LineData, Time } from 'lightweight-charts';
 
 // Helper function to format candle data to match Chart component requirements
-const formatCandleData = (candles: CandleData[]): (CandlestickData<Time> | LineData<Time>)[] => {
-  return candles.map(candle => {
-    // Convert time to UTC timestamp in seconds if it's a string
-    const timeValue = typeof candle.time === 'string' 
-      ? new Date(candle.time).getTime() / 1000
-      : candle.time;
-      
-    return {
-      time: timeValue as Time,
-      open: candle.open,
-      high: candle.high,
-      low: candle.low,
-      close: candle.close,
-      volume: candle.tick_volume
-    };
-  });
+const formatCandleData = (candles: CandleData[], chartType: ChartType): CandlestickData<Time>[] | LineData<Time>[] => {
+  if (chartType === 'line' || chartType === 'area') {
+    // Return as LineData array for line or area charts
+    return candles.map(candle => {
+      // Convert time to UTC timestamp in seconds if it's a string
+      const timeValue = typeof candle.time === 'string' 
+        ? new Date(candle.time).getTime() / 1000
+        : candle.time;
+        
+      return {
+        time: timeValue as Time,
+        value: candle.close,
+      };
+    }) as LineData<Time>[];
+  } else {
+    // Return as CandlestickData array for candlestick or bar charts
+    return candles.map(candle => {
+      // Convert time to UTC timestamp in seconds if it's a string
+      const timeValue = typeof candle.time === 'string' 
+        ? new Date(candle.time).getTime() / 1000
+        : candle.time;
+        
+      return {
+        time: timeValue as Time,
+        open: candle.open,
+        high: candle.high,
+        low: candle.low,
+        close: candle.close,
+        volume: candle.tick_volume
+      };
+    }) as CandlestickData<Time>[];
+  }
 };
 
 const TradingPlatform: React.FC = () => {
@@ -43,7 +59,7 @@ const TradingPlatform: React.FC = () => {
   const [selectedSymbol, setSelectedSymbol] = useState<string>('XAUUSD');
   const [selectedTimeframe, setSelectedTimeframe] = useState<string>('M1'); // Using M1 format based on API response
   const [chartType, setChartType] = useState<ChartType>('candlestick');
-  const [candles, setCandles] = useState<(CandlestickData<Time> | LineData<Time>)[]>([]);
+  const [candles, setCandles] = useState<CandlestickData<Time>[] | LineData<Time>[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [prices, setPrices] = useState<Record<string, PriceData>>({});
 
@@ -103,7 +119,7 @@ const TradingPlatform: React.FC = () => {
         console.log(`Fetching candles for ${selectedSymbol} ${selectedTimeframe}`);
         const data = await fetchCandles(selectedSymbol, selectedTimeframe, 500);
         // Format the data to match Chart component requirements
-        const formattedData = formatCandleData(data);
+        const formattedData = formatCandleData(data, chartType);
         setCandles(formattedData);
         setIsLoading(false);
       } catch (error) {
@@ -116,7 +132,7 @@ const TradingPlatform: React.FC = () => {
     if (selectedSymbol && selectedTimeframe) {
       loadCandles();
     }
-  }, [selectedSymbol, selectedTimeframe]);
+  }, [selectedSymbol, selectedTimeframe, chartType]);
 
   // Handle WebSocket messages
   useEffect(() => {
