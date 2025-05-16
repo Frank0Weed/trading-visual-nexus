@@ -62,6 +62,7 @@ const TradingPlatform: React.FC = () => {
   const [candles, setCandles] = useState<CandlestickData<Time>[] | LineData<Time>[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [prices, setPrices] = useState<Record<string, PriceData>>({});
+  const [activeIndicators, setActiveIndicators] = useState<string[]>([]);
 
   const { sendMessage, lastMessage, readyState } = useWebSocket(getWebSocketUrl(), {
     shouldReconnect: () => true,
@@ -194,6 +195,17 @@ const TradingPlatform: React.FC = () => {
     setChartType(type);
   }, []);
 
+  // Handle indicator toggle
+  const handleIndicatorToggle = useCallback((indicatorId: string) => {
+    setActiveIndicators(prev => {
+      if (prev.includes(indicatorId)) {
+        return prev.filter(id => id !== indicatorId);
+      } else {
+        return [...prev, indicatorId];
+      }
+    });
+  }, []);
+
   return (
     <div className="flex flex-col h-full">
       {/* Header with connection status */}
@@ -232,6 +244,8 @@ const TradingPlatform: React.FC = () => {
         timeframe={selectedTimeframe}
         timeframes={timeframes}
         onTimeframeChange={handleTimeframeChange}
+        activeIndicators={activeIndicators}
+        onIndicatorToggle={handleIndicatorToggle}
       />
 
       {/* Main chart */}
@@ -248,6 +262,7 @@ const TradingPlatform: React.FC = () => {
             chartType={chartType}
             height={500}
             className="w-full"
+            activeIndicators={activeIndicators}
           />
         )}
       </div>
