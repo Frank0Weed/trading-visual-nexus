@@ -2,32 +2,56 @@
 import { Capacitor } from '@capacitor/core';
 
 /**
- * Get the current platform: web, ios, or android
+ * Check if the application is running on iOS
  */
-export const getPlatform = (): 'web' | 'ios' | 'android' => {
-  if (Capacitor.isNativePlatform()) {
-    return Capacitor.getPlatform() as 'ios' | 'android';
-  }
-  return 'web';
+export const isIOS = (): boolean => {
+  return Capacitor.getPlatform() === 'ios';
 };
 
 /**
- * Check if the app is running on a mobile device
+ * Check if the application is running on Android
  */
-export const isNativeMobile = (): boolean => {
-  return Capacitor.isNativePlatform();
+export const isAndroid = (): boolean => {
+  return Capacitor.getPlatform() === 'android';
 };
 
 /**
- * Get the platform version number
+ * Check if the application is running on web
  */
-export const getPlatformVersion = (): string => {
-  return Capacitor.getPlatformInfo().operatingSystemVersion;
+export const isWeb = (): boolean => {
+  return Capacitor.getPlatform() === 'web';
 };
 
 /**
- * Check if the app is running in development mode
+ * Check if the application is running on a native platform (iOS or Android)
  */
-export const isDevelopment = (): boolean => {
-  return import.meta.env.DEV;
+export const isNative = (): boolean => {
+  return isIOS() || isAndroid();
+};
+
+/**
+ * Get the current platform name
+ */
+export const getPlatformName = (): string => {
+  return Capacitor.getPlatform();
+};
+
+/**
+ * Check if the device is in dark mode
+ * Note: This is a simple implementation and might need to be enhanced
+ */
+export const isDarkMode = (): boolean => {
+  return window.matchMedia('(prefers-color-scheme: dark)').matches;
+};
+
+/**
+ * Get device information
+ */
+export const getDeviceInfo = () => {
+  return {
+    platform: Capacitor.getPlatform(),
+    isNative: isNative(),
+    isWeb: isWeb(),
+    isDarkMode: isDarkMode()
+  };
 };
