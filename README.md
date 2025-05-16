@@ -1,73 +1,133 @@
-# Welcome to your Lovable project
 
-## Project info
+# TradingPro - Advanced Financial Charts
+
+TradingPro is a professional trading platform with advanced financial charts that works across Web, iOS, and Android.
+
+![TradingPro Screenshot](https://lovable.dev/opengraph-image-p98pqg.png)
+
+## Features
+
+- Real-time financial charts with multiple timeframes
+- Support for different chart types (Candlestick, Line, Bar, Area)
+- Volume indicators
+- Mobile-responsive design for all devices
+- Cross-platform support (Web, iOS, Android)
+
+## Project Info
 
 **URL**: https://lovable.dev/projects/46dce0b3-ffa1-418e-b9fc-e0b2ac3ecbad
 
-## How can I edit this code?
+## Running the Application
 
-There are several ways of editing your application.
+### Web Version
 
-**Use Lovable**
+To run the web version of TradingPro:
 
-Simply visit the [Lovable Project](https://lovable.dev/projects/46dce0b3-ffa1-418e-b9fc-e0b2ac3ecbad) and start prompting.
+```bash
+# Install dependencies
+npm install
 
-Changes made via Lovable will be committed automatically to this repo.
-
-**Use your preferred IDE**
-
-If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
-
-The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
-
-Follow these steps:
-
-```sh
-# Step 1: Clone the repository using the project's Git URL.
-git clone <YOUR_GIT_URL>
-
-# Step 2: Navigate to the project directory.
-cd <YOUR_PROJECT_NAME>
-
-# Step 3: Install the necessary dependencies.
-npm i
-
-# Step 4: Start the development server with auto-reloading and an instant preview.
+# Start development server
 npm run dev
+
+# Build for production
+npm run build
 ```
 
-**Edit a file directly in GitHub**
+### iOS Version
 
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
+To run TradingPro on iOS:
 
-**Use GitHub Codespaces**
+1. Make sure you have a Mac with Xcode installed (12.5 or higher)
+2. Have iOS development tools set up
 
-- Navigate to the main page of your repository.
-- Click on the "Code" button (green button) near the top right.
-- Select the "Codespaces" tab.
-- Click on "New codespace" to launch a new Codespace environment.
-- Edit files directly within the Codespace and commit and push your changes once you're done.
+```bash
+# Install dependencies
+npm install
 
-## What technologies are used for this project?
+# Build the web app
+npm run build
 
-This project is built with:
+# Add iOS platform
+npx cap add ios
 
-- Vite
-- TypeScript
+# Update native iOS platform
+npx cap update ios
+
+# Sync web code to native platform
+npx cap sync ios
+
+# Open in Xcode
+npx cap open ios
+```
+
+From Xcode, you can run the app on a simulator or physical device.
+
+### Android Version
+
+To run TradingPro on Android:
+
+1. Make sure you have Android Studio installed
+2. Have Android development tools and SDK set up
+
+```bash
+# Install dependencies
+npm install
+
+# Build the web app
+npm run build
+
+# Add Android platform
+npx cap add android
+
+# Update native Android platform
+npx cap update android
+
+# Sync web code to native platform
+npx cap sync android
+
+# Open in Android Studio
+npx cap open android
+```
+
+From Android Studio, you can run the app on an emulator or physical device.
+
+### Live Development with Mobile
+
+For live development with instant updates on mobile devices:
+
+```bash
+# Start dev server
+npm run dev
+
+# Sync changes to native platforms
+npx cap sync
+```
+
+Use the server URL in the capacitor.config.ts file to enable live reloading.
+
+## API Configuration
+
+The app connects to a trading API server running at `http://localhost:3000/api/v1`. Make sure the API server is running when using the application.
+
+## Technology Stack
+
 - React
-- shadcn-ui
+- TypeScript
+- Vite
 - Tailwind CSS
+- Lightweight Charts
+- Capacitor for mobile deployment
+- Shadcn/ui for component library
 
-## How can I deploy this project?
+## Contributing
 
-Simply open [Lovable](https://lovable.dev/projects/46dce0b3-ffa1-418e-b9fc-e0b2ac3ecbad) and click on Share -> Publish.
+1. Fork the repository
+2. Create your feature branch: `git checkout -b feature/amazing-feature`
+3. Commit your changes: `git commit -m 'Add some amazing feature'`
+4. Push to the branch: `git push origin feature/amazing-feature`
+5. Open a Pull Request
 
-## Can I connect a custom domain to my Lovable project?
+## License
 
-Yes, you can!
-
-To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
-
-Read more here: [Setting up a custom domain](https://docs.lovable.dev/tips-tricks/custom-domain#step-by-step-guide)
+This project is licensed under the MIT License
