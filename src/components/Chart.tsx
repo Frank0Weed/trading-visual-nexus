@@ -1,4 +1,3 @@
-
 import React, { useRef, useEffect, useState } from 'react';
 import { 
   createChart, 
@@ -73,14 +72,29 @@ const Chart: React.FC<ChartProps> = ({
   const handleZoomIn = () => {
     if (!chartRef.current) return;
     const timeScale = chartRef.current.timeScale();
-    timeScale.zoom(0.5);
+    const visibleLogicalRange = timeScale.getVisibleLogicalRange();
+    if (visibleLogicalRange !== null) {
+      const newRange = {
+        from: visibleLogicalRange.from + (visibleLogicalRange.to - visibleLogicalRange.from) * 0.25,
+        to: visibleLogicalRange.to - (visibleLogicalRange.to - visibleLogicalRange.from) * 0.25
+      };
+      timeScale.setVisibleLogicalRange(newRange);
+    }
   };
 
   // Handle zoom out
   const handleZoomOut = () => {
     if (!chartRef.current) return;
     const timeScale = chartRef.current.timeScale();
-    timeScale.zoom(-0.5);
+    const visibleLogicalRange = timeScale.getVisibleLogicalRange();
+    if (visibleLogicalRange !== null) {
+      const rangeSize = visibleLogicalRange.to - visibleLogicalRange.from;
+      const newRange = {
+        from: visibleLogicalRange.from - rangeSize * 0.25,
+        to: visibleLogicalRange.to + rangeSize * 0.25
+      };
+      timeScale.setVisibleLogicalRange(newRange);
+    }
   };
 
   // Calculate indicators
