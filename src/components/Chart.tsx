@@ -9,11 +9,14 @@ import {
   CandlestickData, 
   HistogramData, 
   LineData,
-  LineStyle
+  LineStyle,
+  PriceScaleMode
 } from 'lightweight-charts';
 import { cn } from '@/lib/utils';
 import { CandleData } from '@/services/apiService';
 import availableIndicators, { Indicator } from '@/utils/indicators';
+import { ZoomIn, ZoomOut } from 'lucide-react';
+import { Button } from './ui/button';
 
 export type ChartType = 'candlestick' | 'line' | 'bar' | 'area';
 
@@ -44,11 +47,13 @@ const Chart: React.FC<ChartProps> = ({
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<"Candlestick"> | ISeriesApi<"Line"> | ISeriesApi<"Bar"> | ISeriesApi<"Area"> | null>(null);
   const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
+  const priceLineRef = useRef<any>(null);
   const indicatorSeriesRef = useRef<Record<string, any>>({});
   const resizeObserverRef = useRef<ResizeObserver | null>(null);
 
   const [isInitialized, setIsInitialized] = useState(false);
   const [indicators, setIndicators] = useState<Record<string, any>>({});
+  const [currentPrice, setCurrentPrice] = useState<number | null>(null);
 
   // Format volume data
   const formatVolumeData = () => {
@@ -62,6 +67,20 @@ const Chart: React.FC<ChartProps> = ({
         color
       };
     });
+  };
+
+  // Handle zoom in
+  const handleZoomIn = () => {
+    if (!chartRef.current) return;
+    const timeScale = chartRef.current.timeScale();
+    timeScale.zoom(0.5);
+  };
+
+  // Handle zoom out
+  const handleZoomOut = () => {
+    if (!chartRef.current) return;
+    const timeScale = chartRef.current.timeScale();
+    timeScale.zoom(-0.5);
   };
 
   // Calculate indicators
@@ -81,12 +100,46 @@ const Chart: React.FC<ChartProps> = ({
     setIndicators(calculatedIndicators);
   }, [data, activeIndicators]);
 
+  // Set up live price line
+  useEffect(() => {
+    if (!data || data.length === 0 || !seriesRef.current) return;
+    
+    // Get the latest price
+    const lastCandle = data[data.length - 1];
+    const price = 'close' in lastCandle ? lastCandle.close : lastCandle.value;
+    
+    setCurrentPrice(price);
+    
+    if (seriesRef.current) {
+      // Remove old price line if exists
+      if (priceLineRef.current) {
+        seriesRef.current.removePriceLine(priceLineRef.current);
+      }
+      
+      // Create new price line
+      priceLineRef.current = seriesRef.current.createPriceLine({
+        price: price,
+        color: '#2196F3',
+        lineWidth: 2,
+        lineStyle: LineStyle.Dashed,
+        axisLabelVisible: true,
+        title: 'Current',
+      });
+    }
+    
+    return () => {
+      if (seriesRef.current && priceLineRef.current) {
+        seriesRef.current.removePriceLine(priceLineRef.current);
+      }
+    };
+  }, [data, isInitialized]);
+
   useEffect(() => {
     if (!chartContainerRef.current) return;
 
     const handleResize = () => {
-      if (chartRef.current) {
-        chartRef.current.applyOptions({ width: chartContainerRef.current?.clientWidth });
+      if (chartRef.current && chartContainerRef.current) {
+        chartRef.current.applyOptions({ width: chartContainerRef.current.clientWidth });
       }
     };
 
@@ -107,6 +160,7 @@ const Chart: React.FC<ChartProps> = ({
       },
       rightPriceScale: {
         borderColor: '#242731',
+        mode: PriceScaleMode.Normal,
       },
       timeScale: {
         borderColor: '#242731',
@@ -263,7 +317,7 @@ const Chart: React.FC<ChartProps> = ({
           
           lineSeries.setData(lineData);
           indicatorSeriesRef.current[indicatorId] = lineSeries;
-        } else if (indicatorId === 'bollingerBands') {
+        } else if (indicatorId === 'bbands') {
           // Add upper band
           const upperSeries = chartRef.current.addLineSeries({
             color: indicator.color || '#7E57C2',
@@ -330,7 +384,6 @@ const Chart: React.FC<ChartProps> = ({
               top: 0.7, 
               bottom: 0.3,
             },
-            drawTicks: false,
           });
           
           const macdData = indicatorData.macd.map((value: number, index: number) => ({
@@ -373,7 +426,6 @@ const Chart: React.FC<ChartProps> = ({
               top: 0.2, 
               bottom: 0,
             },
-            drawTicks: false,
           });
           
           const histogramData = indicatorData.histogram.map((value: number, index: number) => ({
@@ -397,8 +449,6 @@ const Chart: React.FC<ChartProps> = ({
               top: 0.1, 
               bottom: 0.1,
             },
-            minValue: 0,
-            maxValue: 100,
           });
           
           const rsiData = indicatorData.map((value: number, index: number) => ({
@@ -455,8 +505,6 @@ const Chart: React.FC<ChartProps> = ({
               top: 0.1, 
               bottom: 0.3,
             },
-            minValue: 0,
-            maxValue: 100,
           });
           
           const adxData = indicatorData.adx.map((value: number, index: number) => ({
@@ -516,6 +564,36 @@ const Chart: React.FC<ChartProps> = ({
           {timeframe}
         </div>
       </div>
+      
+      {/* Zoom controls */}
+      <div className="absolute top-2 right-2 z-10 flex gap-2">
+        <Button 
+          variant="outline" 
+          size="icon"
+          className="h-8 w-8 bg-trading-bg-dark bg-opacity-70"
+          onClick={handleZoomIn}
+        >
+          <ZoomIn className="h-4 w-4" />
+        </Button>
+        <Button 
+          variant="outline" 
+          size="icon"
+          className="h-8 w-8 bg-trading-bg-dark bg-opacity-70"
+          onClick={handleZoomOut}
+        >
+          <ZoomOut className="h-4 w-4" />
+        </Button>
+      </div>
+      
+      {/* Current price display */}
+      {currentPrice && (
+        <div className="absolute top-2 right-20 z-10">
+          <div className="bg-primary text-primary-foreground text-sm py-1 px-3 rounded font-medium">
+            {currentPrice.toFixed(2)}
+          </div>
+        </div>
+      )}
+      
       <div ref={chartContainerRef} className="w-full h-full" />
     </div>
   );

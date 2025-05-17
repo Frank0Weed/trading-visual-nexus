@@ -11,6 +11,8 @@ export interface Indicator {
   defaultParams: any;
   calculate: (candles: CandlestickData<Time>[], params?: any) => any;
   format: (value: any) => string;
+  color?: string;
+  display?: 'main' | 'separate';
   plotConfig?: {
     type: 'line' | 'histogram' | 'area' | 'bars';
     lineWidth?: number;
@@ -314,6 +316,8 @@ const indicators: Record<string, Indicator> = {
     defaultParams: { period: 14 },
     calculate: calculateRSI,
     format: (value: number) => `${value.toFixed(2)}`,
+    color: '#9345F2',
+    display: 'separate',
     plotConfig: {
       type: 'line',
       lineWidth: 2,
@@ -332,6 +336,8 @@ const indicators: Record<string, Indicator> = {
     description: 'Trend-following momentum indicator',
     category: 'momentum',
     defaultParams: { fast: 12, slow: 26, signal: 9 },
+    color: '#5C7CFA',
+    display: 'separate',
     calculate: (candles: CandlestickData<Time>[], params?: any) => {
       return calculateMACD(candles, params);
     },
@@ -357,6 +363,8 @@ const indicators: Record<string, Indicator> = {
     description: 'Measures trend strength without direction',
     category: 'trend',
     defaultParams: { period: 14 },
+    color: '#FF922B',
+    display: 'separate',
     calculate: (candles: CandlestickData<Time>[], params?: any) => {
       return calculateADX(candles, params);
     },
@@ -382,6 +390,8 @@ const indicators: Record<string, Indicator> = {
     description: 'Volatility bands placed above and below a moving average',
     category: 'volatility',
     defaultParams: { period: 20, stdDev: 2 },
+    color: '#22B8CF',
+    display: 'main',
     calculate: (candles: CandlestickData<Time>[], params?: any) => {
       return calculateBollingerBands(candles, params);
     },

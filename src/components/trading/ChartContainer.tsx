@@ -1,7 +1,8 @@
 
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { CandlestickData, LineData, Time } from 'lightweight-charts';
 import Chart, { ChartType } from '../Chart';
+import { PriceData } from '@/services/apiService';
 
 interface ChartContainerProps {
   isLoading: boolean;
@@ -10,6 +11,7 @@ interface ChartContainerProps {
   timeframe: string;
   chartType: ChartType;
   activeIndicators: string[];
+  latestPrice?: PriceData;
 }
 
 const ChartContainer: React.FC<ChartContainerProps> = ({
@@ -18,7 +20,8 @@ const ChartContainer: React.FC<ChartContainerProps> = ({
   symbol,
   timeframe,
   chartType,
-  activeIndicators
+  activeIndicators,
+  latestPrice
 }) => {
   return (
     <div className="flex-1 p-0 relative">
