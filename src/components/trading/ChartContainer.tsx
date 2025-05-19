@@ -1,5 +1,5 @@
 
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import { CandlestickData, LineData, Time } from 'lightweight-charts';
 import Chart, { ChartType } from '../Chart';
 import { PriceData } from '@/services/apiService';

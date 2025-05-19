@@ -1,3 +1,4 @@
+
 import React, { useRef, useEffect, useState } from 'react';
 import { 
   createChart, 
@@ -9,7 +10,8 @@ import {
   HistogramData, 
   LineData,
   LineStyle,
-  PriceScaleMode
+  PriceScaleMode,
+  MouseEventParams
 } from 'lightweight-charts';
 import { cn } from '@/lib/utils';
 import { CandleData } from '@/services/apiService';
@@ -29,6 +31,19 @@ interface ChartProps {
   className?: string;
   onVisibleTimeRangeChange?: (range: { from: number; to: number }) => void;
   activeIndicators?: string[]; // Array of indicator IDs to display
+}
+
+interface HoverData {
+  time: Time | null;
+  price: number | null;
+  ohlc: {
+    open?: number;
+    high?: number;
+    low?: number;
+    close?: number;
+    volume?: number;
+  } | null;
+  indicatorValues: Record<string, any>;
 }
 
 const Chart: React.FC<ChartProps> = ({
@@ -53,6 +68,12 @@ const Chart: React.FC<ChartProps> = ({
   const [isInitialized, setIsInitialized] = useState(false);
   const [indicators, setIndicators] = useState<Record<string, any>>({});
   const [currentPrice, setCurrentPrice] = useState<number | null>(null);
+  const [hoverData, setHoverData] = useState<HoverData>({
+    time: null,
+    price: null,
+    ohlc: null,
+    indicatorValues: {}
+  });
 
   // Format volume data
   const formatVolumeData = () => {
@@ -95,6 +116,59 @@ const Chart: React.FC<ChartProps> = ({
       };
       timeScale.setVisibleLogicalRange(newRange);
     }
+  };
+
+  // Find candle data by time
+  const findCandleByTime = (time: Time): CandlestickData<Time> | LineData<Time> | null => {
+    if (!data || !time) return null;
+    return data.find(candle => (candle as any).time === time) || null;
+  };
+
+  // Get indicator values at specific time
+  const getIndicatorValuesAtTime = (time: Time): Record<string, any> => {
+    const result: Record<string, any> = {};
+    
+    if (!time || !indicators) return result;
+    
+    Object.entries(indicators).forEach(([indicatorId, indicatorData]) => {
+      const indicator = availableIndicators[indicatorId];
+      if (!indicator) return;
+      
+      // Find index of the data point with the specific time
+      const index = data.findIndex(candle => (candle as any).time === time);
+      if (index === -1) return;
+      
+      // For different indicator types
+      if (indicatorId === 'rsi' && Array.isArray(indicatorData)) {
+        result[indicatorId] = {
+          name: 'RSI',
+          value: indicatorData[index]
+        };
+      } else if (indicatorId === 'macd' && indicatorData.macd) {
+        result[indicatorId] = {
+          name: 'MACD',
+          macd: indicatorData.macd[index],
+          signal: indicatorData.signal[index],
+          histogram: indicatorData.histogram[index]
+        };
+      } else if (indicatorId === 'bbands' && indicatorData.upper) {
+        result[indicatorId] = {
+          name: 'Bollinger Bands',
+          upper: indicatorData.upper[index],
+          middle: indicatorData.middle[index],
+          lower: indicatorData.lower[index]
+        };
+      } else if (indicatorId === 'adx' && indicatorData.adx) {
+        result[indicatorId] = {
+          name: 'ADX',
+          adx: indicatorData.adx[index],
+          plusDI: indicatorData.plusDI[index],
+          minusDI: indicatorData.minusDI[index]
+        };
+      }
+    });
+    
+    return result;
   };
 
   // Calculate indicators
@@ -171,6 +245,18 @@ const Chart: React.FC<ChartProps> = ({
       },
       crosshair: {
         mode: CrosshairMode.Normal,
+        vertLine: {
+          width: 1,
+          color: '#aaa',
+          style: LineStyle.Solid,
+          labelBackgroundColor: '#5d606b',
+        },
+        horzLine: {
+          width: 1,
+          color: '#aaa',
+          style: LineStyle.Solid,
+          labelBackgroundColor: '#5d606b',
+        },
       },
       rightPriceScale: {
         borderColor: '#242731',
@@ -252,6 +338,53 @@ const Chart: React.FC<ChartProps> = ({
     seriesRef.current = series || null;
     volumeSeriesRef.current = volumeSeries;
     chartRef.current = chart;
+    
+    // Set up mouse move handler for data window
+    chart.subscribeCrosshairMove((param: MouseEventParams) => {
+      if (
+        param.point === undefined ||
+        !param.time ||
+        param.point.x < 0 ||
+        param.point.x > chartContainerRef.current!.clientWidth ||
+        param.point.y < 0 ||
+        param.point.y > chartContainerRef.current!.clientHeight
+      ) {
+        // Mouse is outside the chart
+        setHoverData({
+          time: null,
+          price: null,
+          ohlc: null,
+          indicatorValues: {}
+        });
+        return;
+      }
+
+      const candle = findCandleByTime(param.time);
+      const indicatorValues = getIndicatorValuesAtTime(param.time);
+      
+      let ohlcData = null;
+      if ('open' in (candle || {})) {
+        const candleWithOHLC = candle as CandlestickData<Time>;
+        ohlcData = {
+          open: candleWithOHLC.open,
+          high: candleWithOHLC.high,
+          low: candleWithOHLC.low,
+          close: candleWithOHLC.close,
+          volume: 'volume' in candleWithOHLC ? candleWithOHLC.volume : undefined
+        };
+      } else if (candle && 'value' in candle) {
+        ohlcData = {
+          close: (candle as LineData<Time>).value
+        };
+      }
+
+      setHoverData({
+        time: param.time,
+        price: param.seriesPrices.get(seriesRef.current as any) as number || null,
+        ohlc: ohlcData,
+        indicatorValues
+      });
+    });
     
     // Set up resize observer
     resizeObserverRef.current = new ResizeObserver(handleResize);
@@ -565,6 +698,15 @@ const Chart: React.FC<ChartProps> = ({
     }
   }, [indicators, activeIndicators, isInitialized, data]);
 
+  // Format timestamp for display
+  const formatTime = (timestamp: Time | null): string => {
+    if (!timestamp) return '';
+    
+    // Convert timestamp to Date object (timestamp is in seconds)
+    const date = new Date(Number(timestamp) * 1000);
+    return date.toLocaleString();
+  };
+
   return (
     <div
       className={cn('chart-container relative', className)}
@@ -605,6 +747,87 @@ const Chart: React.FC<ChartProps> = ({
           <div className="bg-primary text-primary-foreground text-sm py-1 px-3 rounded font-medium">
             {currentPrice.toFixed(2)}
           </div>
+        </div>
+      )}
+      
+      {/* Data window - show OHLC and indicator values on hover */}
+      {hoverData.time && hoverData.ohlc && (
+        <div className="absolute top-12 right-2 z-10 bg-trading-bg-dark bg-opacity-90 p-3 rounded border border-border min-w-56 text-sm shadow-lg">
+          <div className="font-medium pb-1 border-b border-border mb-2">
+            {formatTime(hoverData.time)}
+          </div>
+          
+          {/* OHLC data */}
+          <div className="grid grid-cols-2 gap-x-4 gap-y-1 mb-2">
+            <div className="text-muted-foreground">Open</div>
+            <div className="font-mono text-right">{hoverData.ohlc.open?.toFixed(2)}</div>
+            
+            <div className="text-muted-foreground">High</div>
+            <div className="font-mono text-right">{hoverData.ohlc.high?.toFixed(2)}</div>
+            
+            <div className="text-muted-foreground">Low</div>
+            <div className="font-mono text-right">{hoverData.ohlc.low?.toFixed(2)}</div>
+            
+            <div className="text-muted-foreground">Close</div>
+            <div className="font-mono text-right">{hoverData.ohlc.close?.toFixed(2)}</div>
+            
+            {hoverData.ohlc.volume !== undefined && (
+              <>
+                <div className="text-muted-foreground">Volume</div>
+                <div className="font-mono text-right">{hoverData.ohlc.volume}</div>
+              </>
+            )}
+          </div>
+          
+          {/* Indicator values */}
+          {Object.keys(hoverData.indicatorValues).length > 0 && (
+            <div className="border-t border-border pt-2">
+              <div className="font-medium mb-1">Indicators</div>
+              {Object.entries(hoverData.indicatorValues).map(([indicatorId, data]) => (
+                <div key={indicatorId} className="mb-2">
+                  <div className="font-medium text-xs text-primary">{data.name}</div>
+                  <div className="grid grid-cols-2 gap-x-4 gap-y-0.5">
+                    {indicatorId === 'rsi' && (
+                      <>
+                        <div className="text-muted-foreground text-xs">Value</div>
+                        <div className="font-mono text-right text-xs">{Number(data.value).toFixed(2)}</div>
+                      </>
+                    )}
+                    {indicatorId === 'macd' && (
+                      <>
+                        <div className="text-muted-foreground text-xs">MACD</div>
+                        <div className="font-mono text-right text-xs">{Number(data.macd).toFixed(2)}</div>
+                        <div className="text-muted-foreground text-xs">Signal</div>
+                        <div className="font-mono text-right text-xs">{Number(data.signal).toFixed(2)}</div>
+                        <div className="text-muted-foreground text-xs">Histogram</div>
+                        <div className="font-mono text-right text-xs">{Number(data.histogram).toFixed(2)}</div>
+                      </>
+                    )}
+                    {indicatorId === 'bbands' && (
+                      <>
+                        <div className="text-muted-foreground text-xs">Upper</div>
+                        <div className="font-mono text-right text-xs">{Number(data.upper).toFixed(2)}</div>
+                        <div className="text-muted-foreground text-xs">Middle</div>
+                        <div className="font-mono text-right text-xs">{Number(data.middle).toFixed(2)}</div>
+                        <div className="text-muted-foreground text-xs">Lower</div>
+                        <div className="font-mono text-right text-xs">{Number(data.lower).toFixed(2)}</div>
+                      </>
+                    )}
+                    {indicatorId === 'adx' && (
+                      <>
+                        <div className="text-muted-foreground text-xs">ADX</div>
+                        <div className="font-mono text-right text-xs">{Number(data.adx).toFixed(2)}</div>
+                        <div className="text-muted-foreground text-xs">+DI</div>
+                        <div className="font-mono text-right text-xs">{Number(data.plusDI).toFixed(2)}</div>
+                        <div className="text-muted-foreground text-xs">-DI</div>
+                        <div className="font-mono text-right text-xs">{Number(data.minusDI).toFixed(2)}</div>
+                      </>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
       

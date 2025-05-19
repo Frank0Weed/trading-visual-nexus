@@ -72,6 +72,7 @@ const TradingPlatform: React.FC = () => {
   // Combine initial prices with live updates
   const currentPrices = { ...initialPrices, ...prices };
   const isLoading = isInitializing || isLoadingChart;
+  const latestPrice = currentPrices[selectedSymbol];
 
   return (
     <div className="flex flex-col h-full">
@@ -110,6 +111,7 @@ const TradingPlatform: React.FC = () => {
         timeframe={selectedTimeframe}
         chartType={chartType}
         activeIndicators={activeIndicators}
+        latestPrice={latestPrice}
       />
     </div>
   );
