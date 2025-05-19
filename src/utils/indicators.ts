@@ -35,7 +35,7 @@ const calculateRSI = (candles: CandlestickData<Time>[], params = { period: 14 })
   const rsi: number[] = [];
   
   if (prices.length <= period) {
-    return Array(prices.length).fill(0);
+    return Array(prices.length).fill(50); // Default neutral value
   }
   
   let gains = 0;
@@ -56,7 +56,7 @@ const calculateRSI = (candles: CandlestickData<Time>[], params = { period: 14 })
   
   // Calculate RSI for the first period
   for (let i = 0; i < period; i++) {
-    rsi.push(0); // Placeholder for periods without enough data
+    rsi.push(50); // Placeholder for periods without enough data
   }
   
   if (avgLoss === 0) {
@@ -97,22 +97,34 @@ const calculateMACD = (candles: CandlestickData<Time>[], params = {
   fast: 12, slow: 26, signal: 9 
 }): { macd: number[], signal: number[], histogram: number[] } => {
   const { fast, slow, signal } = params;
+  
+  if (candles.length < slow) {
+    const emptyResult = Array(candles.length).fill(0);
+    return {
+      macd: emptyResult,
+      signal: emptyResult,
+      histogram: emptyResult
+    };
+  }
+  
   const prices = candles.map(c => c.close);
   
   // Calculate EMAs
   const calculateEMA = (data: number[], period: number) => {
     const k = 2 / (period + 1);
     const emaData: number[] = [];
-    let ema = data[0];
+    let ema = data.slice(0, period).reduce((sum, price) => sum + price, 0) / period;
     
     emaData.push(ema);
     
-    for (let i = 1; i < data.length; i++) {
+    for (let i = period; i < data.length; i++) {
       ema = (data[i] * k) + (ema * (1 - k));
       emaData.push(ema);
     }
     
-    return emaData;
+    // Pad the beginning with the first EMA value to match length
+    const padding = Array(period - 1).fill(emaData[0]);
+    return [...padding, ...emaData];
   };
   
   const fastEMA = calculateEMA(prices, fast);
@@ -121,37 +133,73 @@ const calculateMACD = (candles: CandlestickData<Time>[], params = {
   // Calculate MACD line
   const macdLine: number[] = [];
   for (let i = 0; i < prices.length; i++) {
-    if (i < slow - 1) {
-      macdLine.push(0);
-    } else {
-      macdLine.push(fastEMA[i] - slowEMA[i]);
-    }
+    macdLine.push(fastEMA[i] - slowEMA[i]);
   }
   
-  // Calculate signal line
-  const signalLine = calculateEMA(macdLine.slice(slow - 1), signal);
-  
-  // Add padding to signal line to match length of price data
-  const paddedSignalLine = [
-    ...Array(slow + signal - 2).fill(0),
-    ...signalLine
-  ];
+  // Calculate signal line (EMA of MACD)
+  const signalValues = calculateEMA(macdLine, signal);
   
   // Calculate histogram
   const histogram: number[] = [];
-  for (let i = 0; i < prices.length; i++) {
-    if (i < slow + signal - 2) {
-      histogram.push(0);
-    } else {
-      histogram.push(macdLine[i] - paddedSignalLine[i]);
-    }
+  for (let i = 0; i < macdLine.length; i++) {
+    histogram.push(macdLine[i] - signalValues[i]);
   }
   
   return {
     macd: macdLine,
-    signal: paddedSignalLine,
+    signal: signalValues,
     histogram
   };
+};
+
+// Bollinger Bands
+const calculateBollingerBands = (candles: CandlestickData<Time>[], params = { 
+  period: 20, stdDev: 2 
+}): { upper: number[], middle: number[], lower: number[] } => {
+  const { period, stdDev } = params;
+  const prices = candles.map(c => c.close);
+  
+  if (prices.length < period) {
+    const emptyResult = Array(candles.length).fill(prices[0] || 0);
+    return { 
+      upper: emptyResult,
+      middle: emptyResult,
+      lower: emptyResult
+    };
+  }
+  
+  const upper: number[] = [];
+  const middle: number[] = [];
+  const lower: number[] = [];
+  
+  // Fill in initial values with first price to maintain array length
+  for (let i = 0; i < period - 1; i++) {
+    upper.push(prices[i]);
+    middle.push(prices[i]);
+    lower.push(prices[i]);
+  }
+  
+  for (let i = period - 1; i < prices.length; i++) {
+    // Calculate SMA for middle band
+    let sum = 0;
+    for (let j = i - period + 1; j <= i; j++) {
+      sum += prices[j];
+    }
+    const sma = sum / period;
+    
+    // Calculate standard deviation
+    let sqSum = 0;
+    for (let j = i - period + 1; j <= i; j++) {
+      sqSum += Math.pow(prices[j] - sma, 2);
+    }
+    const stdDevValue = Math.sqrt(sqSum / period);
+    
+    middle.push(sma);
+    upper.push(sma + (stdDev * stdDevValue));
+    lower.push(sma - (stdDev * stdDevValue));
+  }
+  
+  return { upper, middle, lower };
 };
 
 // ADX (Average Directional Index)
@@ -159,15 +207,21 @@ const calculateADX = (candles: CandlestickData<Time>[], params = {
   period: 14 
 }): { adx: number[], plusDI: number[], minusDI: number[] } => {
   const { period } = params;
+  
+  if (candles.length < period + 10) {
+    const emptyResult = Array(candles.length).fill(0);
+    return {
+      adx: emptyResult,
+      plusDI: emptyResult,
+      minusDI: emptyResult
+    };
+  }
+  
   const result = {
     adx: Array(candles.length).fill(0),
     plusDI: Array(candles.length).fill(0),
     minusDI: Array(candles.length).fill(0)
   };
-
-  if (candles.length < period + 1) {
-    return result;
-  }
 
   // Function to calculate true range
   const calculateTR = (current: CandlestickData<Time>, previous: CandlestickData<Time>): number => {
@@ -257,56 +311,7 @@ const calculateADX = (candles: CandlestickData<Time>[], params = {
   };
 };
 
-// Bollinger Bands
-const calculateBollingerBands = (candles: CandlestickData<Time>[], params = { 
-  period: 20, stdDev: 2 
-}): { upper: number[], middle: number[], lower: number[] } => {
-  const { period, stdDev } = params;
-  const prices = candles.map(c => c.close);
-  
-  const upper: number[] = [];
-  const middle: number[] = [];
-  const lower: number[] = [];
-  
-  // Not enough data for calculation
-  if (prices.length < period) {
-    return { 
-      upper: Array(prices.length).fill(0),
-      middle: Array(prices.length).fill(0),
-      lower: Array(prices.length).fill(0)
-    };
-  }
-  
-  for (let i = 0; i < period - 1; i++) {
-    upper.push(prices[i]);
-    middle.push(prices[i]);
-    lower.push(prices[i]);
-  }
-  
-  for (let i = period - 1; i < prices.length; i++) {
-    // Calculate SMA for middle band
-    let sum = 0;
-    for (let j = i - period + 1; j <= i; j++) {
-      sum += prices[j];
-    }
-    const sma = sum / period;
-    
-    // Calculate standard deviation
-    let sqSum = 0;
-    for (let j = i - period + 1; j <= i; j++) {
-      sqSum += Math.pow(prices[j] - sma, 2);
-    }
-    const stdDevValue = Math.sqrt(sqSum / period);
-    
-    middle.push(sma);
-    upper.push(sma + (stdDev * stdDevValue));
-    lower.push(sma - (stdDev * stdDevValue));
-  }
-  
-  return { upper, middle, lower };
-};
-
-// Define the indicators object
+// Define the indicators object with improved colors
 const indicators: Record<string, Indicator> = {
   rsi: {
     id: 'rsi',
@@ -316,12 +321,12 @@ const indicators: Record<string, Indicator> = {
     defaultParams: { period: 14 },
     calculate: calculateRSI,
     format: (value: number) => `${value.toFixed(2)}`,
-    color: '#9345F2',
+    color: '#9b87f5', // Updated to Primary Purple
     display: 'separate',
     plotConfig: {
       type: 'line',
       lineWidth: 2,
-      color: '#9345F2',
+      color: '#9b87f5', // Updated to Primary Purple
       overlay: false,
       priceScaleId: 'rsi',
       scaleMargins: {
@@ -336,7 +341,7 @@ const indicators: Record<string, Indicator> = {
     description: 'Trend-following momentum indicator',
     category: 'momentum',
     defaultParams: { fast: 12, slow: 26, signal: 9 },
-    color: '#5C7CFA',
+    color: '#0EA5E9', // Updated to Ocean Blue
     display: 'separate',
     calculate: (candles: CandlestickData<Time>[], params?: any) => {
       return calculateMACD(candles, params);
@@ -348,7 +353,7 @@ const indicators: Record<string, Indicator> = {
     plotConfig: {
       type: 'histogram',
       lineWidth: 1,
-      color: '#5C7CFA',
+      color: '#0EA5E9', // Updated to Ocean Blue
       overlay: false,
       priceScaleId: 'macd',
       scaleMargins: {
@@ -363,7 +368,7 @@ const indicators: Record<string, Indicator> = {
     description: 'Measures trend strength without direction',
     category: 'trend',
     defaultParams: { period: 14 },
-    color: '#FF922B',
+    color: '#F97316', // Updated to Bright Orange
     display: 'separate',
     calculate: (candles: CandlestickData<Time>[], params?: any) => {
       return calculateADX(candles, params);
@@ -375,7 +380,7 @@ const indicators: Record<string, Indicator> = {
     plotConfig: {
       type: 'line',
       lineWidth: 1,
-      color: '#FF922B',
+      color: '#F97316', // Updated to Bright Orange
       overlay: false,
       priceScaleId: 'adx',
       scaleMargins: {
@@ -390,7 +395,7 @@ const indicators: Record<string, Indicator> = {
     description: 'Volatility bands placed above and below a moving average',
     category: 'volatility',
     defaultParams: { period: 20, stdDev: 2 },
-    color: '#22B8CF',
+    color: '#D946EF', // Updated to Magenta Pink
     display: 'main',
     calculate: (candles: CandlestickData<Time>[], params?: any) => {
       return calculateBollingerBands(candles, params);
@@ -402,7 +407,7 @@ const indicators: Record<string, Indicator> = {
     plotConfig: {
       type: 'line',
       lineWidth: 1,
-      color: '#22B8CF',
+      color: '#D946EF', // Updated to Magenta Pink
       overlay: true,
       priceScaleId: 'right',
       scaleMargins: {

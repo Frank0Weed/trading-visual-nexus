@@ -94,83 +94,108 @@ export const useChartData = ({
   const updateLatestCandle = useCallback((candle: CandleData) => {
     if (!candle) return;
     
-    setCandles(prevCandles => {
-      if (!prevCandles || prevCandles.length === 0) return prevCandles;
-      
-      const timeValue = typeof candle.time === 'string' 
-        ? new Date(candle.time).getTime() / 1000
-        : candle.time;
-      
-      // Check if this candle already exists (same timestamp)
-      const candleIndex = prevCandles.findIndex(
-        c => (c as any).time === timeValue
-      );
-      
-      let newCandles = [...prevCandles];
-      
-      if (chartType === 'line' || chartType === 'area') {
-        // For line charts
-        const lineCandle = {
+    if (chartType === 'line' || chartType === 'area') {
+      setCandles(prevCandles => {
+        if (!prevCandles || prevCandles.length === 0) return prevCandles as LineData<Time>[];
+
+        const timeValue = typeof candle.time === 'string'
+          ? new Date(candle.time).getTime() / 1000
+          : candle.time;
+        
+        // Type cast the array to ensure TypeScript knows it's LineData
+        const lineCandles = prevCandles as LineData<Time>[];
+        
+        // Find the candle with matching timestamp
+        const candleIndex = lineCandles.findIndex(c => c.time === timeValue);
+        
+        const lineCandle: LineData<Time> = {
           time: timeValue as Time,
           value: candle.close
-        } as LineData<Time>;
+        };
         
         if (candleIndex >= 0) {
           // Update existing candle
-          newCandles[candleIndex] = lineCandle;
+          const updatedCandles = [...lineCandles];
+          updatedCandles[candleIndex] = lineCandle;
+          return updatedCandles;
         } else {
           // Add new candle
-          newCandles.push(lineCandle);
+          return [...lineCandles, lineCandle].sort((a, b) => 
+            Number(a.time) - Number(b.time)
+          );
         }
-      } else {
-        // For candlestick/bar charts
-        const candlestickData = {
+      });
+    } else {
+      setCandles(prevCandles => {
+        if (!prevCandles || prevCandles.length === 0) return prevCandles as CandlestickData<Time>[];
+
+        const timeValue = typeof candle.time === 'string'
+          ? new Date(candle.time).getTime() / 1000
+          : candle.time;
+
+        // Type cast the array to ensure TypeScript knows it's CandlestickData
+        const candlestickCandles = prevCandles as CandlestickData<Time>[];
+        
+        // Find the candle with matching timestamp
+        const candleIndex = candlestickCandles.findIndex(c => c.time === timeValue);
+        
+        const candlestickData: CandlestickData<Time> = {
           time: timeValue as Time,
           open: candle.open,
           high: candle.high,
           low: candle.low,
           close: candle.close,
           volume: candle.tick_volume
-        } as CandlestickData<Time>;
+        };
         
         if (candleIndex >= 0) {
           // Update existing candle
-          newCandles[candleIndex] = candlestickData;
+          const updatedCandles = [...candlestickCandles];
+          updatedCandles[candleIndex] = candlestickData;
+          return updatedCandles;
         } else {
           // Add new candle
-          newCandles.push(candlestickData);
+          return [...candlestickCandles, candlestickData].sort((a, b) => 
+            Number(a.time) - Number(b.time)
+          );
         }
-      }
-      
-      // Sort candles by time to ensure they're in chronological order
-      return newCandles.sort((a, b) => 
-        ((a as any).time as number) - ((b as any).time as number)
-      );
-    });
+      });
+    }
   }, [chartType]);
   
   // Update just the latest price (for real-time updates)
   const updateLatestPrice = useCallback((price: number) => {
-    setCandles(prevCandles => {
-      if (!prevCandles || prevCandles.length === 0) return prevCandles;
-      
-      const lastCandle = {...prevCandles[prevCandles.length - 1]};
-      
-      // Update the close price and potentially the high/low if needed
-      if (chartType === 'line' || chartType === 'area') {
-        (lastCandle as LineData<Time>).value = price;
-      } else {
-        const candleData = lastCandle as CandlestickData<Time>;
-        candleData.close = price;
-        candleData.high = Math.max(candleData.high, price);
-        candleData.low = Math.min(candleData.low, price);
-      }
-      
-      return [
-        ...prevCandles.slice(0, -1),
-        lastCandle
-      ];
-    });
+    if (chartType === 'line' || chartType === 'area') {
+      setCandles(prevCandles => {
+        if (!prevCandles || prevCandles.length === 0) return prevCandles as LineData<Time>[];
+        
+        // Type cast to ensure TypeScript knows it's LineData
+        const lineCandles = prevCandles as LineData<Time>[];
+        const lastCandle = { ...lineCandles[lineCandles.length - 1] };
+        lastCandle.value = price;
+        
+        return [
+          ...lineCandles.slice(0, -1),
+          lastCandle
+        ];
+      });
+    } else {
+      setCandles(prevCandles => {
+        if (!prevCandles || prevCandles.length === 0) return prevCandles as CandlestickData<Time>[];
+        
+        // Type cast to ensure TypeScript knows it's CandlestickData
+        const candlestickCandles = prevCandles as CandlestickData<Time>[];
+        const lastCandle = { ...candlestickCandles[candlestickCandles.length - 1] };
+        lastCandle.close = price;
+        lastCandle.high = Math.max(lastCandle.high, price);
+        lastCandle.low = Math.min(lastCandle.low, price);
+        
+        return [
+          ...candlestickCandles.slice(0, -1),
+          lastCandle
+        ];
+      });
+    }
   }, [chartType]);
   
   // Update candle when latestCandle prop changes
