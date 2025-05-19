@@ -24,10 +24,12 @@ const ChartContainer: React.FC<ChartContainerProps> = ({
   latestPrice
 }) => {
   return (
-    <div className="flex-1 p-0 relative">
+    <div className="flex-1 p-0 relative rounded-lg border border-border bg-trading-bg-dark overflow-hidden">
       {isLoading ? (
         <div className="absolute inset-0 flex items-center justify-center bg-trading-bg-dark bg-opacity-50 z-10">
-          <div className="animate-pulse-light text-primary">Loading chart data...</div>
+          <div className="animate-pulse-light text-primary font-medium px-4 py-2 bg-trading-bg-dark bg-opacity-80 rounded-md border border-border/30">
+            Loading chart data...
+          </div>
         </div>
       ) : (
         <Chart
@@ -39,6 +41,13 @@ const ChartContainer: React.FC<ChartContainerProps> = ({
           className="w-full"
           activeIndicators={activeIndicators}
         />
+      )}
+      
+      {/* Latest price badge */}
+      {latestPrice && !isLoading && (
+        <div className="absolute top-2 right-2 bg-primary text-primary-foreground text-sm font-medium py-1 px-3 rounded z-20">
+          {latestPrice.bid.toFixed(2)}
+        </div>
       )}
     </div>
   );

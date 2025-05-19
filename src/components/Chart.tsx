@@ -164,6 +164,16 @@ const Chart: React.FC<ChartProps> = ({
           plusDI: indicatorData.plusDI[index],
           minusDI: indicatorData.minusDI[index]
         };
+      } else if (indicatorId === 'sma' && Array.isArray(indicatorData)) {
+        result[indicatorId] = {
+          name: 'SMA',
+          value: indicatorData[index]
+        };
+      } else if (indicatorId === 'ema' && Array.isArray(indicatorData)) {
+        result[indicatorId] = {
+          name: 'EMA',
+          value: indicatorData[index]
+        };
       }
     });
     
@@ -716,11 +726,12 @@ const Chart: React.FC<ChartProps> = ({
       className={cn('chart-container relative', className)}
       style={{ width, height }}
     >
+      {/* Symbol and timeframe badges */}
       <div className="absolute top-2 left-2 z-10 flex gap-2">
-        <div className="bg-trading-bg-dark bg-opacity-70 text-sm py-1 px-2 rounded">
+        <div className="bg-sidebar-primary text-sidebar-primary-foreground text-xs py-1 px-2 rounded-md font-medium">
           {symbol}
         </div>
-        <div className="bg-trading-bg-dark bg-opacity-70 text-sm py-1 px-2 rounded">
+        <div className="bg-sidebar-accent text-sidebar-accent-foreground text-xs py-1 px-2 rounded-md font-medium">
           {timeframe}
         </div>
       </div>
@@ -730,7 +741,7 @@ const Chart: React.FC<ChartProps> = ({
         <Button 
           variant="outline" 
           size="icon"
-          className="h-8 w-8 bg-trading-bg-dark bg-opacity-70"
+          className="h-8 w-8 bg-sidebar-secondary bg-opacity-80 hover:bg-sidebar-accent transition-colors"
           onClick={handleZoomIn}
         >
           <ZoomIn className="h-4 w-4" />
@@ -738,7 +749,7 @@ const Chart: React.FC<ChartProps> = ({
         <Button 
           variant="outline" 
           size="icon"
-          className="h-8 w-8 bg-trading-bg-dark bg-opacity-70"
+          className="h-8 w-8 bg-sidebar-secondary bg-opacity-80 hover:bg-sidebar-accent transition-colors"
           onClick={handleZoomOut}
         >
           <ZoomOut className="h-4 w-4" />
@@ -756,29 +767,29 @@ const Chart: React.FC<ChartProps> = ({
       
       {/* Data window - show OHLC and indicator values on hover */}
       {hoverData.time && hoverData.ohlc && (
-        <div className="absolute top-12 right-2 z-10 bg-trading-bg-dark bg-opacity-90 p-3 rounded border border-border min-w-56 text-sm shadow-lg">
-          <div className="font-medium pb-1 border-b border-border mb-2">
+        <div className="absolute top-12 right-2 z-10 bg-trading-bg-dark bg-opacity-95 p-4 rounded-md border border-border shadow-lg max-w-64">
+          <div className="font-medium pb-1 border-b border-border mb-3 text-xs text-primary">
             {formatTime(hoverData.time)}
           </div>
           
           {/* OHLC data */}
-          <div className="grid grid-cols-2 gap-x-4 gap-y-1 mb-2">
-            <div className="text-muted-foreground">Open</div>
-            <div className="font-mono text-right">{hoverData.ohlc.open?.toFixed(2)}</div>
+          <div className="grid grid-cols-2 gap-x-4 gap-y-1 mb-3">
+            <div className="text-muted-foreground text-xs">Open</div>
+            <div className="font-mono text-sm text-right text-foreground">{hoverData.ohlc.open?.toFixed(2)}</div>
             
-            <div className="text-muted-foreground">High</div>
-            <div className="font-mono text-right">{hoverData.ohlc.high?.toFixed(2)}</div>
+            <div className="text-muted-foreground text-xs">High</div>
+            <div className="font-mono text-sm text-right text-trading-up">{hoverData.ohlc.high?.toFixed(2)}</div>
             
-            <div className="text-muted-foreground">Low</div>
-            <div className="font-mono text-right">{hoverData.ohlc.low?.toFixed(2)}</div>
+            <div className="text-muted-foreground text-xs">Low</div>
+            <div className="font-mono text-sm text-right text-trading-down">{hoverData.ohlc.low?.toFixed(2)}</div>
             
-            <div className="text-muted-foreground">Close</div>
-            <div className="font-mono text-right">{hoverData.ohlc.close?.toFixed(2)}</div>
+            <div className="text-muted-foreground text-xs">Close</div>
+            <div className="font-mono text-sm text-right text-foreground font-medium">{hoverData.ohlc.close?.toFixed(2)}</div>
             
             {hoverData.ohlc.volume !== undefined && (
               <>
-                <div className="text-muted-foreground">Volume</div>
-                <div className="font-mono text-right">{hoverData.ohlc.volume}</div>
+                <div className="text-muted-foreground text-xs">Volume</div>
+                <div className="font-mono text-sm text-right">{Number(hoverData.ohlc.volume).toLocaleString()}</div>
               </>
             )}
           </div>
@@ -786,12 +797,23 @@ const Chart: React.FC<ChartProps> = ({
           {/* Indicator values */}
           {Object.keys(hoverData.indicatorValues).length > 0 && (
             <div className="border-t border-border pt-2">
-              <div className="font-medium mb-1">Indicators</div>
+              <div className="font-medium mb-2 text-xs text-primary">Indicators</div>
               {Object.entries(hoverData.indicatorValues).map(([indicatorId, data]) => (
-                <div key={indicatorId} className="mb-2">
-                  <div className="font-medium text-xs text-primary">{data.name}</div>
+                <div key={indicatorId} className="mb-2 bg-sidebar-accent/10 rounded-sm p-1.5">
+                  <div className="font-medium text-xs text-primary mb-1">{data.name}</div>
                   <div className="grid grid-cols-2 gap-x-4 gap-y-0.5">
                     {indicatorId === 'rsi' && (
+                      <>
+                        <div className="text-muted-foreground text-xs">Value</div>
+                        <div className={cn(
+                          "font-mono text-right text-xs font-medium",
+                          data.value > 70 ? "text-trading-down" : data.value < 30 ? "text-trading-up" : ""
+                        )}>
+                          {Number(data.value).toFixed(2)}
+                        </div>
+                      </>
+                    )}
+                    {(indicatorId === 'sma' || indicatorId === 'ema') && (
                       <>
                         <div className="text-muted-foreground text-xs">Value</div>
                         <div className="font-mono text-right text-xs">{Number(data.value).toFixed(2)}</div>
@@ -804,7 +826,12 @@ const Chart: React.FC<ChartProps> = ({
                         <div className="text-muted-foreground text-xs">Signal</div>
                         <div className="font-mono text-right text-xs">{Number(data.signal).toFixed(2)}</div>
                         <div className="text-muted-foreground text-xs">Histogram</div>
-                        <div className="font-mono text-right text-xs">{Number(data.histogram).toFixed(2)}</div>
+                        <div className={cn(
+                          "font-mono text-right text-xs",
+                          Number(data.histogram) > 0 ? "text-trading-up" : "text-trading-down"
+                        )}>
+                          {Number(data.histogram).toFixed(2)}
+                        </div>
                       </>
                     )}
                     {indicatorId === 'bbands' && (
@@ -820,11 +847,16 @@ const Chart: React.FC<ChartProps> = ({
                     {indicatorId === 'adx' && (
                       <>
                         <div className="text-muted-foreground text-xs">ADX</div>
-                        <div className="font-mono text-right text-xs">{Number(data.adx).toFixed(2)}</div>
+                        <div className={cn(
+                          "font-mono text-right text-xs",
+                          Number(data.adx) > 25 ? "text-trading-up font-medium" : ""
+                        )}>
+                          {Number(data.adx).toFixed(2)}
+                        </div>
                         <div className="text-muted-foreground text-xs">+DI</div>
-                        <div className="font-mono text-right text-xs">{Number(data.plusDI).toFixed(2)}</div>
+                        <div className="font-mono text-right text-xs text-trading-up">{Number(data.plusDI).toFixed(2)}</div>
                         <div className="text-muted-foreground text-xs">-DI</div>
-                        <div className="font-mono text-right text-xs">{Number(data.minusDI).toFixed(2)}</div>
+                        <div className="font-mono text-right text-xs text-trading-down">{Number(data.minusDI).toFixed(2)}</div>
                       </>
                     )}
                   </div>
