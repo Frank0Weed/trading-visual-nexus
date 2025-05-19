@@ -127,49 +127,57 @@ const Chart: React.FC<ChartProps> = ({
   const getIndicatorValuesAtTime = (time: Time): Record<string, any> => {
     const result: Record<string, any> = {};
     
-    if (!time || !indicators) return result;
+    if (!time || !indicators || !data || data.length === 0) return result;
     
     Object.entries(indicators).forEach(([indicatorId, indicatorData]) => {
       const indicator = availableIndicators[indicatorId];
-      if (!indicator) return;
+      if (!indicator || !indicatorData) return;
       
       // Find index of the data point with the specific time
-      const index = data.findIndex(candle => (candle as any).time === time);
+      const index = data.findIndex(candle => 
+        candle && (candle as any).time === time
+      );
       if (index === -1) return;
       
       // For different indicator types
-      if (indicatorId === 'rsi' && Array.isArray(indicatorData)) {
+      if (indicatorId === 'rsi' && Array.isArray(indicatorData) && index < indicatorData.length) {
         result[indicatorId] = {
           name: 'RSI',
           value: indicatorData[index]
         };
-      } else if (indicatorId === 'macd' && indicatorData.macd) {
+      } else if (indicatorId === 'macd' && indicatorData.macd && indicatorData.signal && 
+                 indicatorData.histogram && index < indicatorData.macd.length &&
+                 index < indicatorData.signal.length && index < indicatorData.histogram.length) {
         result[indicatorId] = {
           name: 'MACD',
           macd: indicatorData.macd[index],
           signal: indicatorData.signal[index],
           histogram: indicatorData.histogram[index]
         };
-      } else if (indicatorId === 'bbands' && indicatorData.upper) {
+      } else if (indicatorId === 'bbands' && indicatorData.upper && indicatorData.middle && 
+                 indicatorData.lower && index < indicatorData.upper.length &&
+                 index < indicatorData.middle.length && index < indicatorData.lower.length) {
         result[indicatorId] = {
           name: 'Bollinger Bands',
           upper: indicatorData.upper[index],
           middle: indicatorData.middle[index],
           lower: indicatorData.lower[index]
         };
-      } else if (indicatorId === 'adx' && indicatorData.adx) {
+      } else if (indicatorId === 'adx' && indicatorData.adx && indicatorData.plusDI && 
+                 indicatorData.minusDI && index < indicatorData.adx.length &&
+                 index < indicatorData.plusDI.length && index < indicatorData.minusDI.length) {
         result[indicatorId] = {
           name: 'ADX',
           adx: indicatorData.adx[index],
           plusDI: indicatorData.plusDI[index],
           minusDI: indicatorData.minusDI[index]
         };
-      } else if (indicatorId === 'sma' && Array.isArray(indicatorData)) {
+      } else if (indicatorId === 'sma' && Array.isArray(indicatorData) && index < indicatorData.length) {
         result[indicatorId] = {
           name: 'SMA',
           value: indicatorData[index]
         };
-      } else if (indicatorId === 'ema' && Array.isArray(indicatorData)) {
+      } else if (indicatorId === 'ema' && Array.isArray(indicatorData) && index < indicatorData.length) {
         result[indicatorId] = {
           name: 'EMA',
           value: indicatorData[index]
@@ -342,7 +350,13 @@ const Chart: React.FC<ChartProps> = ({
       },
     });
     
-    volumeSeries.setData(formatVolumeData() as HistogramData<Time>[]);
+    // Only set volume data if we have data
+    if (data && data.length > 0) {
+      const formattedVolumeData = formatVolumeData();
+      if (formattedVolumeData.length > 0) {
+        volumeSeries.setData(formattedVolumeData as HistogramData<Time>[]);
+      }
+    }
 
     seriesRef.current = series || null;
     volumeSeriesRef.current = volumeSeries;
@@ -431,7 +445,7 @@ const Chart: React.FC<ChartProps> = ({
 
   // Update data when it changes
   useEffect(() => {
-    if (!isInitialized || !seriesRef.current || !volumeSeriesRef.current || !data.length) return;
+    if (!isInitialized || !seriesRef.current || !volumeSeriesRef.current || !data || data.length === 0) return;
 
     if (chartType === 'candlestick' || chartType === 'bar') {
       seriesRef.current.setData(data as CandlestickData<Time>[]);
@@ -439,12 +453,15 @@ const Chart: React.FC<ChartProps> = ({
       seriesRef.current.setData(data as LineData<Time>[]);
     }
 
-    volumeSeriesRef.current.setData(formatVolumeData() as HistogramData<Time>[]);
+    const volumeData = formatVolumeData();
+    if (volumeData && volumeData.length > 0) {
+      volumeSeriesRef.current.setData(volumeData as HistogramData<Time>[]);
+    }
   }, [data, isInitialized, chartType]);
 
   // Update indicator visualizations
   useEffect(() => {
-    if (!isInitialized || !chartRef.current || !indicators) return;
+    if (!isInitialized || !chartRef.current || !indicators || !data || data.length === 0) return;
 
     // Clear existing indicator series
     Object.values(indicatorSeriesRef.current).forEach(series => {
@@ -471,14 +488,20 @@ const Chart: React.FC<ChartProps> = ({
             title: indicator.name,
           });
           
-          const lineData = indicatorData.map((value: number, index: number) => ({
-            time: (data[index] as any).time,
-            value: value
-          }));
+          // Create line data safely with null checks
+          const lineData = indicatorData.map((value: number, index: number) => {
+            if (index < data.length && data[index]) {
+              return {
+                time: (data[index] as any).time,
+                value: value
+              };
+            }
+            return null;
+          }).filter(item => item !== null);
           
           lineSeries.setData(lineData);
           indicatorSeriesRef.current[indicatorId] = lineSeries;
-        } else if (indicatorId === 'bbands') {
+        } else if (indicatorId === 'bbands' && indicatorData.upper && indicatorData.middle && indicatorData.lower) {
           // Add upper band
           const upperSeries = chartRef.current.addLineSeries({
             color: indicator.color || '#7E57C2',
@@ -487,30 +510,41 @@ const Chart: React.FC<ChartProps> = ({
             title: `${indicator.name} Upper`,
           });
           
-          const upperData = indicatorData.upper.map((value: number, index: number) => ({
-            time: (data[index] as any).time,
-            value: value
-          }));
+          // Create upper band data safely with null checks
+          const upperData = indicatorData.upper.map((value: number, index: number) => {
+            if (index < data.length && data[index]) {
+              return {
+                time: (data[index] as any).time,
+                value: value
+              };
+            }
+            return null;
+          }).filter(item => item !== null);
           
           upperSeries.setData(upperData);
           indicatorSeriesRef.current[`${indicatorId}_upper`] = upperSeries;
           
-          // Add middle band
+          // Add middle band with similar safety checks
           const middleSeries = chartRef.current.addLineSeries({
             color: indicator.color || '#7E57C2',
             lineWidth: 1,
             title: `${indicator.name} Middle`,
           });
           
-          const middleData = indicatorData.middle.map((value: number, index: number) => ({
-            time: (data[index] as any).time,
-            value: value
-          }));
+          const middleData = indicatorData.middle.map((value: number, index: number) => {
+            if (index < data.length && data[index]) {
+              return {
+                time: (data[index] as any).time,
+                value: value
+              };
+            }
+            return null;
+          }).filter(item => item !== null);
           
           middleSeries.setData(middleData);
           indicatorSeriesRef.current[`${indicatorId}_middle`] = middleSeries;
           
-          // Add lower band
+          // Add lower band with similar safety checks
           const lowerSeries = chartRef.current.addLineSeries({
             color: indicator.color || '#7E57C2',
             lineWidth: 1,
@@ -518,16 +552,21 @@ const Chart: React.FC<ChartProps> = ({
             title: `${indicator.name} Lower`,
           });
           
-          const lowerData = indicatorData.lower.map((value: number, index: number) => ({
-            time: (data[index] as any).time,
-            value: value
-          }));
+          const lowerData = indicatorData.lower.map((value: number, index: number) => {
+            if (index < data.length && data[index]) {
+              return {
+                time: (data[index] as any).time,
+                value: value
+              };
+            }
+            return null;
+          }).filter(item => item !== null);
           
           lowerSeries.setData(lowerData);
           indicatorSeriesRef.current[`${indicatorId}_lower`] = lowerSeries;
         }
       } else {
-        // Add secondary indicators in separate panes
+        // Add secondary indicators in separate panes with similar safety checks for all data mappings
         if (indicatorId === 'macd') {
           // MACD Line
           const macdSeries = chartRef.current.addHistogramSeries({
