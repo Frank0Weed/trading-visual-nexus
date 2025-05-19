@@ -52,7 +52,7 @@ const formatCandleData = (candles: CandleData[], chartType: ChartType): Candlest
         high: candle.high,
         low: candle.low,
         close: candle.close,
-        volume: candle.tick_volume
+        // Remove the volume property as it's not part of the CandlestickData<Time> interface
       };
     }) as CandlestickData<Time>[];
   }
@@ -145,7 +145,7 @@ export const useChartData = ({
           high: candle.high,
           low: candle.low,
           close: candle.close,
-          volume: candle.tick_volume
+          // Remove volume property from here as well
         };
         
         if (candleIndex >= 0) {
