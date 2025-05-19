@@ -2,6 +2,7 @@
 import { CandlestickData, Time } from 'lightweight-charts';
 
 export type IndicatorCategory = 'momentum' | 'trend' | 'volume' | 'volatility' | 'breadth';
+export type IndicatorDisplay = 'main' | 'separate' | 'separate-window';
 
 export interface Indicator {
   id: string;
@@ -12,7 +13,7 @@ export interface Indicator {
   calculate: (candles: CandlestickData<Time>[], params?: any) => any;
   format: (value: any) => string;
   color?: string;
-  display?: 'main' | 'separate';
+  display?: IndicatorDisplay;
   plotConfig?: {
     type: 'line' | 'histogram' | 'area' | 'bars';
     lineWidth?: number;
@@ -311,6 +312,55 @@ const calculateADX = (candles: CandlestickData<Time>[], params = {
   };
 };
 
+// Calculate Simple Moving Average
+const calculateSMA = (candles: CandlestickData<Time>[], params = { period: 50 }): number[] => {
+  const { period } = params;
+  const prices = candles.map(c => c.close);
+  const sma: number[] = [];
+  
+  // Fill initial values with NaN for periods without enough data
+  for (let i = 0; i < period - 1; i++) {
+    sma.push(prices[i]); // Just use the price value for incomplete periods
+  }
+  
+  // Calculate SMA for complete periods
+  for (let i = period - 1; i < prices.length; i++) {
+    let sum = 0;
+    for (let j = 0; j < period; j++) {
+      sum += prices[i - j];
+    }
+    sma.push(sum / period);
+  }
+  
+  return sma;
+};
+
+// Calculate Exponential Moving Average
+const calculateEMA = (candles: CandlestickData<Time>[], params = { period: 20 }): number[] => {
+  const { period } = params;
+  const prices = candles.map(c => c.close);
+  const k = 2 / (period + 1);
+  const ema: number[] = [];
+  
+  // Start with SMA for the first period
+  let sum = 0;
+  for (let i = 0; i < period; i++) {
+    sum += prices[i];
+    ema.push(prices[i]); // Just use price values for incomplete periods
+  }
+  
+  let currentEma = sum / period;
+  ema[period - 1] = currentEma; // Replace the last value with the actual SMA
+  
+  // Calculate EMA for the rest
+  for (let i = period; i < prices.length; i++) {
+    currentEma = (prices[i] * k) + (currentEma * (1 - k));
+    ema.push(currentEma);
+  }
+  
+  return ema;
+};
+
 // Define the indicators object with improved colors
 const indicators: Record<string, Indicator> = {
   rsi: {
@@ -321,12 +371,12 @@ const indicators: Record<string, Indicator> = {
     defaultParams: { period: 14 },
     calculate: calculateRSI,
     format: (value: number) => `${value.toFixed(2)}`,
-    color: '#9b87f5', // Updated to Primary Purple
-    display: 'separate',
+    color: '#9b87f5', // Primary Purple
+    display: 'separate-window',
     plotConfig: {
       type: 'line',
       lineWidth: 2,
-      color: '#9b87f5', // Updated to Primary Purple
+      color: '#9b87f5', // Primary Purple
       overlay: false,
       priceScaleId: 'rsi',
       scaleMargins: {
@@ -341,8 +391,8 @@ const indicators: Record<string, Indicator> = {
     description: 'Trend-following momentum indicator',
     category: 'momentum',
     defaultParams: { fast: 12, slow: 26, signal: 9 },
-    color: '#0EA5E9', // Updated to Ocean Blue
-    display: 'separate',
+    color: '#0EA5E9', // Ocean Blue
+    display: 'separate-window',
     calculate: (candles: CandlestickData<Time>[], params?: any) => {
       return calculateMACD(candles, params);
     },
@@ -353,7 +403,7 @@ const indicators: Record<string, Indicator> = {
     plotConfig: {
       type: 'histogram',
       lineWidth: 1,
-      color: '#0EA5E9', // Updated to Ocean Blue
+      color: '#0EA5E9', // Ocean Blue
       overlay: false,
       priceScaleId: 'macd',
       scaleMargins: {
@@ -368,8 +418,8 @@ const indicators: Record<string, Indicator> = {
     description: 'Measures trend strength without direction',
     category: 'trend',
     defaultParams: { period: 14 },
-    color: '#F97316', // Updated to Bright Orange
-    display: 'separate',
+    color: '#F97316', // Bright Orange
+    display: 'separate-window',
     calculate: (candles: CandlestickData<Time>[], params?: any) => {
       return calculateADX(candles, params);
     },
@@ -380,7 +430,7 @@ const indicators: Record<string, Indicator> = {
     plotConfig: {
       type: 'line',
       lineWidth: 1,
-      color: '#F97316', // Updated to Bright Orange
+      color: '#F97316', // Bright Orange
       overlay: false,
       priceScaleId: 'adx',
       scaleMargins: {
@@ -395,7 +445,7 @@ const indicators: Record<string, Indicator> = {
     description: 'Volatility bands placed above and below a moving average',
     category: 'volatility',
     defaultParams: { period: 20, stdDev: 2 },
-    color: '#D946EF', // Updated to Magenta Pink
+    color: '#D946EF', // Magenta Pink
     display: 'main',
     calculate: (candles: CandlestickData<Time>[], params?: any) => {
       return calculateBollingerBands(candles, params);
@@ -407,7 +457,51 @@ const indicators: Record<string, Indicator> = {
     plotConfig: {
       type: 'line',
       lineWidth: 1,
-      color: '#D946EF', // Updated to Magenta Pink
+      color: '#D946EF', // Magenta Pink
+      overlay: true,
+      priceScaleId: 'right',
+      scaleMargins: {
+        top: 0.1,
+        bottom: 0.1
+      }
+    }
+  },
+  sma: {
+    id: 'sma',
+    name: 'Simple Moving Average',
+    description: 'Average of price over a specific period',
+    category: 'trend',
+    defaultParams: { period: 50 },
+    color: '#22C55E', // Green
+    display: 'main',
+    calculate: calculateSMA,
+    format: (value: number) => `${value.toFixed(2)}`,
+    plotConfig: {
+      type: 'line',
+      lineWidth: 1.5,
+      color: '#22C55E', // Green
+      overlay: true,
+      priceScaleId: 'right',
+      scaleMargins: {
+        top: 0.1,
+        bottom: 0.1
+      }
+    }
+  },
+  ema: {
+    id: 'ema',
+    name: 'Exponential Moving Average',
+    description: 'Weighted moving average giving more importance to recent prices',
+    category: 'trend',
+    defaultParams: { period: 20 },
+    color: '#3B82F6', // Blue
+    display: 'main',
+    calculate: calculateEMA,
+    format: (value: number) => `${value.toFixed(2)}`,
+    plotConfig: {
+      type: 'line',
+      lineWidth: 1.5,
+      color: '#3B82F6', // Blue
       overlay: true,
       priceScaleId: 'right',
       scaleMargins: {
