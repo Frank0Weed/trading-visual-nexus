@@ -1,4 +1,3 @@
-
 import React, { useRef, useEffect, useState } from 'react';
 import { 
   createChart, 
@@ -363,7 +362,7 @@ const Chart: React.FC<ChartProps> = ({
       const indicatorValues = getIndicatorValuesAtTime(param.time);
       
       let ohlcData = null;
-      if ('open' in (candle || {})) {
+      if (candle && 'open' in candle) {
         const candleWithOHLC = candle as CandlestickData<Time>;
         ohlcData = {
           open: candleWithOHLC.open,
@@ -378,9 +377,14 @@ const Chart: React.FC<ChartProps> = ({
         };
       }
 
+      // Fix: Use the candle's close/value instead of seriesPrices which doesn't exist
+      const price = candle ? 
+        ('close' in candle ? candle.close : ('value' in candle ? candle.value : null)) 
+        : null;
+
       setHoverData({
         time: param.time,
-        price: param.seriesPrices.get(seriesRef.current as any) as number || null,
+        price: price,
         ohlc: ohlcData,
         indicatorValues
       });
