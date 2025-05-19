@@ -1,5 +1,5 @@
 
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { ReadyState } from 'react-use-websocket';
 
 import { ChartType } from './Chart';
@@ -30,20 +30,28 @@ const TradingPlatform: React.FC = () => {
   // Subscribe to live market data via WebSocket
   const { 
     prices, 
+    latestCandles,
     connectionStatus, 
     readyState 
   } = useMarketDataFeed({ 
-    symbols 
+    symbols,
+    currentTimeframe: selectedTimeframe
   });
+
+  // Get the latest candle for the selected symbol and timeframe
+  const latestCandle = latestCandles[selectedSymbol]?.[selectedTimeframe];
 
   // Fetch and format chart data
   const { 
     candles, 
-    isLoading: isLoadingChart 
+    isLoading: isLoadingChart,
+    updateLatestPrice,
+    updateLatestCandle
   } = useChartData({ 
     selectedSymbol, 
     selectedTimeframe, 
-    chartType 
+    chartType,
+    latestCandle
   });
 
   // Event handlers
@@ -112,6 +120,7 @@ const TradingPlatform: React.FC = () => {
         chartType={chartType}
         activeIndicators={activeIndicators}
         latestPrice={latestPrice}
+        updateLatestPrice={updateLatestPrice}
       />
     </div>
   );
