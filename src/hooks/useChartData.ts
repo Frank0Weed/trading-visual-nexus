@@ -81,8 +81,9 @@ export const useChartData = ({
   const [candles, setCandles] = useState<CandlestickData<Time>[] | LineData<Time>[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   
-  // Use ref to track the current candle period
+  // Use refs to track the current candle period and last update timestamp
   const currentCandlePeriodRef = useRef<number | null>(null);
+  const lastPriceUpdateTimeRef = useRef<number>(0);
   const updateRateRef = useRef<number>(0);
 
   // Fetch candles when symbol or timeframe changes
@@ -207,11 +208,12 @@ export const useChartData = ({
     
     // Rate limit updates to avoid excessive re-renders
     const now = Date.now();
-    if (now - updateRateRef.current < 200) return;
+    if (now - updateRateRef.current < 100) return;  // More frequent updates (was 200ms)
     updateRateRef.current = now;
     
     // Get current time in seconds
-    const currentTime = Math.floor(now / 1000);
+    const currentTimeMs = now;
+    const currentTime = Math.floor(currentTimeMs / 1000);
     
     // Calculate the current candle period
     const intervalSeconds = getTimeframeIntervalSeconds(selectedTimeframe);
@@ -222,6 +224,7 @@ export const useChartData = ({
     
     if (isNewPeriod) {
       console.log(`New period detected in updateLatestPrice: ${currentPeriod} (previous: ${currentCandlePeriodRef.current})`);
+      console.log(`Current time: ${new Date(currentTimeMs).toLocaleTimeString()}, New candle time: ${new Date(currentPeriod * intervalSeconds * 1000).toLocaleTimeString()}`);
       
       // Calculate the time for the new candle
       const newCandleTime = currentPeriod * intervalSeconds;
@@ -248,7 +251,7 @@ export const useChartData = ({
         setCandles(prevCandles => {
           const candlestickCandles = prevCandles as CandlestickData<Time>[];
           
-          // Create new candle
+          // Create new candle with price as both open and close
           const newCandle: CandlestickData<Time> = {
             time: newCandleTime as Time,
             open: price,
@@ -258,6 +261,7 @@ export const useChartData = ({
           };
           
           console.log(`Creating new candlestick for period ${currentPeriod} at time ${new Date(newCandleTime * 1000).toLocaleTimeString()}`);
+          console.log(`New candle data:`, newCandle);
           
           // Add the new candle
           return [...candlestickCandles, newCandle].sort((a, b) => 
@@ -266,8 +270,10 @@ export const useChartData = ({
         });
       }
       
-      // Update the current period reference
+      // Update the current period reference immediately
       currentCandlePeriodRef.current = currentPeriod;
+      // Reset the last price update time
+      lastPriceUpdateTimeRef.current = now;
     } else {
       // Just update the latest existing candle
       if (chartType === 'line' || chartType === 'area') {
@@ -299,9 +305,13 @@ export const useChartData = ({
           // Only update if the price has actually changed
           if (lastCandle.close === price) return candlestickCandles;
           
+          // Update high/low only if this is the current period candle
+          if (Math.floor(Number(lastCandle.time) / intervalSeconds) === currentPeriod) {
+            lastCandle.high = Math.max(lastCandle.high, price);
+            lastCandle.low = Math.min(lastCandle.low, price);
+          }
+          
           lastCandle.close = price;
-          lastCandle.high = Math.max(lastCandle.high, price);
-          lastCandle.low = Math.min(lastCandle.low, price);
           
           return [
             ...candlestickCandles.slice(0, -1),
@@ -309,6 +319,9 @@ export const useChartData = ({
           ];
         });
       }
+      
+      // Update the last price update time
+      lastPriceUpdateTimeRef.current = now;
     }
   }, [chartType, selectedTimeframe, candles.length]);
   

@@ -64,6 +64,7 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
     const intervalSeconds = getTimeframeIntervalSeconds(timeframe);
     
     // Calculate the start time of the current candle period
+    // This ensures the candle start time is properly aligned to the timeframe intervals
     const candleStartTime = Math.floor(currentTime / intervalSeconds) * intervalSeconds;
     
     console.log(`Creating new ${timeframe} candle for ${symbol} at time: ${new Date(candleStartTime * 1000).toLocaleTimeString()}`);
@@ -110,10 +111,18 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
     const lastCandleTime = lastCandleTimes[key] || 0;
     const intervalSeconds = getTimeframeIntervalSeconds(timeframe);
     
-    // If the current time has crossed into a new interval period since the last candle
-    const lastCandlePeriod = Math.floor(lastCandleTime / intervalSeconds);
+    // Calculate the current period based on current time
     const currentPeriod = Math.floor(currentTime / intervalSeconds);
     
+    // Calculate the period of the last candle
+    const lastCandlePeriod = Math.floor(lastCandleTime / intervalSeconds);
+    
+    // Debug logging for candle periods
+    if (lastCandlePeriod < currentPeriod) {
+      console.log(`Time for new candle: Last period ${lastCandlePeriod}, Current period ${currentPeriod} for ${symbol} ${timeframe}`);
+    }
+    
+    // Create new candle if we've moved to a new period
     return currentPeriod > lastCandlePeriod;
   };
 
@@ -155,7 +164,8 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
                 };
               });
               
-              // Fix: Ensure we're only storing numbers in lastCandleTimes
+              // Update the last candle time for this symbol and timeframe
+              // Ensure we're storing only numbers in lastCandleTimes
               setLastCandleTimes(prev => ({
                 ...prev,
                 [key]: Number(newCandle.time) // Explicitly convert to number
@@ -163,8 +173,11 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
             } else {
               // If we have an existing candle for this time period, update it with the new price
               const existingCandle = latestCandles[symbol]?.[currentTimeframe];
+              const intervalSeconds = getTimeframeIntervalSeconds(currentTimeframe);
+              const currentPeriodStart = Math.floor(currentTime / intervalSeconds) * intervalSeconds;
               
-              if (existingCandle && existingCandle.time === Math.floor(currentTime / getTimeframeIntervalSeconds(currentTimeframe)) * getTimeframeIntervalSeconds(currentTimeframe)) {
+              // Only update if the candle is for the current period
+              if (existingCandle && existingCandle.time === currentPeriodStart) {
                 const updatedCandle = {
                   ...existingCandle,
                   high: Math.max(existingCandle.high, price),
@@ -211,7 +224,7 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
           
           console.log(`Received server candle for ${symbol} ${timeframe}:`, parsedCandle);
           
-          // Fix: Ensure we're only storing numbers in lastCandleTimes
+          // Update the last candle time for this symbol and timeframe
           const key = `${symbol}-${timeframe}`;
           setLastCandleTimes(prev => ({
             ...prev,
