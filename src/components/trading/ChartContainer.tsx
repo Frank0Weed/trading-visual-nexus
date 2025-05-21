@@ -28,6 +28,7 @@ const ChartContainer: React.FC<ChartContainerProps> = ({
   // Use a ref to track the previous price for comparison
   const prevPriceRef = useRef<number | null>(null);
   const lastUpdateTimeRef = useRef<number>(0);
+  const priceUpdateIntervalRef = useRef<NodeJS.Timeout | null>(null);
   
   // State to track the latest OHLC data
   const [ohlcData, setOhlcData] = useState<{
@@ -81,37 +82,64 @@ const ChartContainer: React.FC<ChartContainerProps> = ({
     }
   }, [candles]);
   
-  // Update chart with live prices, with rate limiting
+  // Set up price update interval
   useEffect(() => {
-    if (!latestPrice || !updateLatestPrice || candles.length === 0) return;
+    if (!latestPrice || !updateLatestPrice) return;
     
+    // Clear any existing interval
+    if (priceUpdateIntervalRef.current) {
+      clearInterval(priceUpdateIntervalRef.current);
+    }
+    
+    // Update immediately on first render
     const currentPrice = latestPrice.bid;
-    const currentTime = Date.now();
-    
-    // Only update if the price has changed and throttle updates (max once per 250ms)
-    if ((currentPrice !== prevPriceRef.current || currentTime - lastUpdateTimeRef.current > 250)) {
+    if (updateLatestPrice && currentPrice !== prevPriceRef.current) {
       updateLatestPrice(currentPrice);
       prevPriceRef.current = currentPrice;
-      lastUpdateTimeRef.current = currentTime;
-      
-      // If we have OHLC data, update the high/low if the new price exceeds them
-      if (ohlcData) {
-        const newHigh = Math.max(ohlcData.high, currentPrice);
-        const newLow = Math.min(ohlcData.low, currentPrice);
+    }
+    
+    // Set up interval for regular updates
+    priceUpdateIntervalRef.current = setInterval(() => {
+      if (latestPrice && updateLatestPrice) {
+        const currentPrice = latestPrice.bid;
+        const currentTime = Date.now();
         
-        if (newHigh !== ohlcData.high || newLow !== ohlcData.low) {
-          setOhlcData({
-            ...ohlcData,
-            high: newHigh,
-            low: newLow,
-            close: currentPrice,
-            change: currentPrice - ohlcData.open,
-            changePercent: ((currentPrice - ohlcData.open) / ohlcData.open) * 100
-          });
+        // Only update if price has changed or it's been 250ms since last update
+        if (currentPrice !== prevPriceRef.current || currentTime - lastUpdateTimeRef.current > 250) {
+          updateLatestPrice(currentPrice);
+          prevPriceRef.current = currentPrice;
+          lastUpdateTimeRef.current = currentTime;
+          
+          // Update OHLC display for current candle if we have data
+          if (ohlcData) {
+            setOhlcData(prev => {
+              if (!prev) return prev;
+              
+              const newHigh = Math.max(prev.high, currentPrice);
+              const newLow = Math.min(prev.low, currentPrice);
+              const change = currentPrice - prev.open;
+              const changePercent = (change / prev.open) * 100;
+              
+              return {
+                ...prev,
+                high: newHigh,
+                low: newLow,
+                close: currentPrice,
+                change,
+                changePercent
+              };
+            });
+          }
         }
       }
-    }
-  }, [latestPrice, updateLatestPrice, candles, ohlcData]);
+    }, 250); // Update every 250ms at most
+    
+    return () => {
+      if (priceUpdateIntervalRef.current) {
+        clearInterval(priceUpdateIntervalRef.current);
+      }
+    };
+  }, [latestPrice, updateLatestPrice, ohlcData]);
 
   return (
     <div className="flex-1 p-0 relative rounded-lg border border-border bg-trading-bg-dark overflow-hidden">
