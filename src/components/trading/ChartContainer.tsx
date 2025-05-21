@@ -27,6 +27,7 @@ const ChartContainer: React.FC<ChartContainerProps> = ({
 }) => {
   // Use a ref to track the previous price for comparison
   const prevPriceRef = useRef<number | null>(null);
+  const lastUpdateTimeRef = useRef<number>(0);
   
   // State to track the latest OHLC data
   const [ohlcData, setOhlcData] = useState<{
@@ -80,18 +81,37 @@ const ChartContainer: React.FC<ChartContainerProps> = ({
     }
   }, [candles]);
   
-  // Update chart with live prices
+  // Update chart with live prices, with rate limiting
   useEffect(() => {
-    if (latestPrice && updateLatestPrice && candles.length > 0) {
-      const currentPrice = latestPrice.bid;
+    if (!latestPrice || !updateLatestPrice || candles.length === 0) return;
+    
+    const currentPrice = latestPrice.bid;
+    const currentTime = Date.now();
+    
+    // Only update if the price has changed and throttle updates (max once per 250ms)
+    if ((currentPrice !== prevPriceRef.current || currentTime - lastUpdateTimeRef.current > 250)) {
+      updateLatestPrice(currentPrice);
+      prevPriceRef.current = currentPrice;
+      lastUpdateTimeRef.current = currentTime;
       
-      // Only update if the price has changed
-      if (currentPrice !== prevPriceRef.current) {
-        updateLatestPrice(currentPrice);
-        prevPriceRef.current = currentPrice;
+      // If we have OHLC data, update the high/low if the new price exceeds them
+      if (ohlcData) {
+        const newHigh = Math.max(ohlcData.high, currentPrice);
+        const newLow = Math.min(ohlcData.low, currentPrice);
+        
+        if (newHigh !== ohlcData.high || newLow !== ohlcData.low) {
+          setOhlcData({
+            ...ohlcData,
+            high: newHigh,
+            low: newLow,
+            close: currentPrice,
+            change: currentPrice - ohlcData.open,
+            changePercent: ((currentPrice - ohlcData.open) / ohlcData.open) * 100
+          });
+        }
       }
     }
-  }, [latestPrice, updateLatestPrice, candles]);
+  }, [latestPrice, updateLatestPrice, candles, ohlcData]);
 
   return (
     <div className="flex-1 p-0 relative rounded-lg border border-border bg-trading-bg-dark overflow-hidden">

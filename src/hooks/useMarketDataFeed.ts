@@ -76,34 +76,61 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
             ...prev,
             [data.symbol]: data.data
           }));
+          
+          // When we get a price update, we need to also check if it's time for a new candle
+          if (data.symbol && prices[data.symbol] && data.data) {
+            const prevTime = prices[data.symbol].time;
+            const currentTime = data.data.time;
+            
+            // If the minute has changed and we're tracking M1 candles, this could be a new candle
+            if (currentTimeframe === 'M1' && 
+                Math.floor(prevTime / 60) !== Math.floor(currentTime / 60)) {
+              console.log(`New minute detected, possibly new M1 candle for ${data.symbol}`);
+            }
+          }
         }
         
         // Handle new candle data
         if (data.type === 'candle_update') {
           const { symbol, timeframe, candle } = data;
           
+          if (!candle || typeof candle !== 'object') {
+            console.error('Received invalid candle data:', candle);
+            return;
+          }
+          
+          // Create a properly structured candle object
+          const parsedCandle: CandleData = {
+            time: candle.time || Math.floor(Date.now() / 1000),
+            open: parseFloat(candle.open) || 0,
+            high: parseFloat(candle.high) || 0,
+            low: parseFloat(candle.low) || 0,
+            close: parseFloat(candle.close) || 0,
+            tick_volume: parseInt(candle.tick_volume) || 0,
+            spread: parseFloat(candle.spread) || 0,
+            real_volume: parseInt(candle.real_volume) || 0
+          };
+          
+          console.log(`Received new candle for ${symbol} ${timeframe}:`, parsedCandle);
+          
           setLatestCandles(prev => {
             // Initialize nested structure if needed
-            if (!prev[symbol]) {
-              prev[symbol] = {};
-            }
+            const symbolCandles = prev[symbol] || {};
             
             return {
               ...prev,
               [symbol]: {
-                ...prev[symbol],
-                [timeframe]: candle
+                ...symbolCandles,
+                [timeframe]: parsedCandle
               }
             };
           });
-          
-          console.log(`Received new candle for ${symbol} ${timeframe}:`, candle);
         }
       } catch (error) {
         console.error('Error parsing WebSocket message:', error);
       }
     }
-  }, [lastMessage]);
+  }, [lastMessage, prices, currentTimeframe]);
 
   // Initial subscription
   useEffect(() => {

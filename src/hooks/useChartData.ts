@@ -52,10 +52,45 @@ const formatCandleData = (candles: CandleData[], chartType: ChartType): Candlest
         high: candle.high,
         low: candle.low,
         close: candle.close,
-        // Remove the volume property as it's not part of the CandlestickData<Time> interface
       };
     }) as CandlestickData<Time>[];
   }
+};
+
+// Helper to create a new empty candle based on the current time
+const createNewCandle = (symbol: string, timeframe: string, lastPrice: number, lastTime: number): CandleData => {
+  // Get current time in seconds
+  const currentTime = Math.floor(Date.now() / 1000);
+  
+  // For different timeframes, we need to adjust the start time
+  let intervalInSeconds = 60; // Default to M1
+  
+  switch(timeframe) {
+    case 'M1': intervalInSeconds = 60; break;
+    case 'M5': intervalInSeconds = 300; break;
+    case 'M15': intervalInSeconds = 900; break;
+    case 'M30': intervalInSeconds = 1800; break;
+    case 'H1': intervalInSeconds = 3600; break;
+    case 'H4': intervalInSeconds = 14400; break;
+    case 'D1': intervalInSeconds = 86400; break;
+    case 'W1': intervalInSeconds = 604800; break;
+    case 'MN1': intervalInSeconds = 2592000; break; // 30 days
+    default: intervalInSeconds = 60;
+  }
+  
+  // Calculate the start time of the candle
+  const candleStartTime = Math.floor(currentTime / intervalInSeconds) * intervalInSeconds;
+  
+  return {
+    time: candleStartTime,
+    open: lastPrice,
+    high: lastPrice,
+    low: lastPrice,
+    close: lastPrice,
+    tick_volume: 1,
+    spread: 0,
+    real_volume: 1
+  };
 };
 
 export const useChartData = ({ 
@@ -66,6 +101,7 @@ export const useChartData = ({
 }: UseChartDataProps): ChartDataResult => {
   const [candles, setCandles] = useState<CandlestickData<Time>[] | LineData<Time>[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [lastCandleTimes, setLastCandleTimes] = useState<Record<string, number>>({});
 
   // Fetch candles when symbol or timeframe changes
   useEffect(() => {
@@ -77,6 +113,19 @@ export const useChartData = ({
         // Format the data to match Chart component requirements
         const formattedData = formatCandleData(data, chartType);
         setCandles(formattedData);
+        
+        // Store the last candle time for new candle detection
+        if (data.length > 0) {
+          const lastCandle = data[data.length - 1];
+          const timeValue = typeof lastCandle.time === 'string' 
+            ? new Date(lastCandle.time).getTime() / 1000
+            : lastCandle.time;
+            
+          setLastCandleTimes({
+            [selectedSymbol + selectedTimeframe]: timeValue
+          });
+        }
+        
         setIsLoading(false);
       } catch (error) {
         console.error(`Error fetching candles for ${selectedSymbol} ${selectedTimeframe}:`, error);
@@ -94,14 +143,31 @@ export const useChartData = ({
   const updateLatestCandle = useCallback((candle: CandleData) => {
     if (!candle) return;
     
-    if (chartType === 'line' || chartType === 'area') {
-      setCandles(prevCandles => {
-        if (!prevCandles || prevCandles.length === 0) return prevCandles as LineData<Time>[];
-
-        const timeValue = typeof candle.time === 'string'
-          ? new Date(candle.time).getTime() / 1000
-          : candle.time;
+    setCandles(prevCandles => {
+      if (!prevCandles || prevCandles.length === 0) return prevCandles;
+      
+      const timeValue = typeof candle.time === 'string'
+        ? new Date(candle.time).getTime() / 1000
+        : candle.time;
+      
+      // Get key for this symbol and timeframe
+      const candleKey = selectedSymbol + selectedTimeframe;
+      const lastKnownTime = lastCandleTimes[candleKey] || 0;
+      
+      // Check if this is a new candle (different timestamp)
+      const isNewCandle = timeValue > lastKnownTime;
+      
+      if (isNewCandle) {
+        console.log(`New candle detected for ${selectedSymbol} ${selectedTimeframe}:`, candle);
         
+        // Update the last known time
+        setLastCandleTimes(prev => ({
+          ...prev,
+          [candleKey]: timeValue
+        }));
+      }
+      
+      if (chartType === 'line' || chartType === 'area') {
         // Type cast the array to ensure TypeScript knows it's LineData
         const lineCandles = prevCandles as LineData<Time>[];
         
@@ -118,21 +184,15 @@ export const useChartData = ({
           const updatedCandles = [...lineCandles];
           updatedCandles[candleIndex] = lineCandle;
           return updatedCandles;
-        } else {
+        } else if (isNewCandle) {
           // Add new candle
           return [...lineCandles, lineCandle].sort((a, b) => 
             Number(a.time) - Number(b.time)
           );
         }
-      });
-    } else {
-      setCandles(prevCandles => {
-        if (!prevCandles || prevCandles.length === 0) return prevCandles as CandlestickData<Time>[];
-
-        const timeValue = typeof candle.time === 'string'
-          ? new Date(candle.time).getTime() / 1000
-          : candle.time;
-
+        
+        return lineCandles;
+      } else {
         // Type cast the array to ensure TypeScript knows it's CandlestickData
         const candlestickCandles = prevCandles as CandlestickData<Time>[];
         
@@ -144,8 +204,7 @@ export const useChartData = ({
           open: candle.open,
           high: candle.high,
           low: candle.low,
-          close: candle.close,
-          // Remove volume property from here as well
+          close: candle.close
         };
         
         if (candleIndex >= 0) {
@@ -153,18 +212,22 @@ export const useChartData = ({
           const updatedCandles = [...candlestickCandles];
           updatedCandles[candleIndex] = candlestickData;
           return updatedCandles;
-        } else {
+        } else if (isNewCandle) {
           // Add new candle
           return [...candlestickCandles, candlestickData].sort((a, b) => 
             Number(a.time) - Number(b.time)
           );
         }
-      });
-    }
-  }, [chartType]);
+        
+        return candlestickCandles;
+      }
+    });
+  }, [chartType, selectedSymbol, selectedTimeframe, lastCandleTimes]);
   
   // Update just the latest price (for real-time updates)
   const updateLatestPrice = useCallback((price: number) => {
+    if (candles.length === 0) return;
+    
     if (chartType === 'line' || chartType === 'area') {
       setCandles(prevCandles => {
         if (!prevCandles || prevCandles.length === 0) return prevCandles as LineData<Time>[];
@@ -172,6 +235,10 @@ export const useChartData = ({
         // Type cast to ensure TypeScript knows it's LineData
         const lineCandles = prevCandles as LineData<Time>[];
         const lastCandle = { ...lineCandles[lineCandles.length - 1] };
+        
+        // Only update if the price has actually changed
+        if (lastCandle.value === price) return lineCandles;
+        
         lastCandle.value = price;
         
         return [
@@ -186,6 +253,10 @@ export const useChartData = ({
         // Type cast to ensure TypeScript knows it's CandlestickData
         const candlestickCandles = prevCandles as CandlestickData<Time>[];
         const lastCandle = { ...candlestickCandles[candlestickCandles.length - 1] };
+        
+        // Only update if the price has actually changed
+        if (lastCandle.close === price) return candlestickCandles;
+        
         lastCandle.close = price;
         lastCandle.high = Math.max(lastCandle.high, price);
         lastCandle.low = Math.min(lastCandle.low, price);
@@ -196,7 +267,7 @@ export const useChartData = ({
         ];
       });
     }
-  }, [chartType]);
+  }, [chartType, candles.length]);
   
   // Update candle when latestCandle prop changes
   useEffect(() => {
