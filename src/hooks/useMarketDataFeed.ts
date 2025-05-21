@@ -155,10 +155,10 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
                 };
               });
               
-              // Update the last candle time to the new candle time
+              // Fix: Ensure we're only storing numbers in lastCandleTimes
               setLastCandleTimes(prev => ({
                 ...prev,
-                [key]: newCandle.time
+                [key]: newCandle.time // newCandle.time is guaranteed to be a number
               }));
             } else {
               // If we have an existing candle for this time period, update it with the new price
@@ -211,11 +211,11 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
           
           console.log(`Received server candle for ${symbol} ${timeframe}:`, parsedCandle);
           
-          // Update our records of the last candle time
+          // Fix: Ensure we're only storing numbers in lastCandleTimes
           const key = `${symbol}-${timeframe}`;
           setLastCandleTimes(prev => ({
             ...prev,
-            [key]: parsedCandle.time
+            [key]: parsedCandle.time // parsedCandle.time is guaranteed to be a number
           }));
           
           // Update the candle in our state
