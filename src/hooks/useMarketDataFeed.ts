@@ -158,7 +158,7 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
               // Fix: Ensure we're only storing numbers in lastCandleTimes
               setLastCandleTimes(prev => ({
                 ...prev,
-                [key]: newCandle.time // newCandle.time is guaranteed to be a number
+                [key]: Number(newCandle.time) // Explicitly convert to number
               }));
             } else {
               // If we have an existing candle for this time period, update it with the new price
@@ -215,7 +215,7 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
           const key = `${symbol}-${timeframe}`;
           setLastCandleTimes(prev => ({
             ...prev,
-            [key]: parsedCandle.time // parsedCandle.time is guaranteed to be a number
+            [key]: Number(parsedCandle.time) // Explicitly convert to number
           }));
           
           // Update the candle in our state
