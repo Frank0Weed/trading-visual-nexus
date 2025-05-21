@@ -4,6 +4,8 @@ import { CandlestickData, LineData, Time } from 'lightweight-charts';
 import Chart, { ChartType } from '../Chart';
 import { PriceData, CandleData } from '@/services/apiService';
 import { Card } from '@/components/ui/card';
+import { ChartContainer as UIChartContainer } from '@/components/ui/chart';
+import { BarChart, Chart as ChartIcon, Volume } from 'lucide-react';
 
 interface ChartContainerProps {
   isLoading: boolean;
@@ -39,6 +41,7 @@ const ChartContainer: React.FC<ChartContainerProps> = ({
     close: number;
     change: number;
     changePercent: number;
+    volume?: number;
   } | null>(null);
   
   // Extract OHLC data from the latest candle
@@ -54,13 +57,19 @@ const ChartContainer: React.FC<ChartContainerProps> = ({
         const change = candleData.close - prevClose;
         const changePercent = (change / prevClose) * 100;
         
+        // Get volume from the original candle data if available
+        const volumeData = candles.length > 0 ? 
+          (candles[candles.length - 1] as any).tick_volume || 
+          (candles[candles.length - 1] as any).volume || 0 : 0;
+        
         setOhlcData({
           open: candleData.open,
           high: candleData.high,
           low: candleData.low,
           close: candleData.close,
           change,
-          changePercent
+          changePercent,
+          volume: volumeData
         });
       } else if ('value' in latestCandle) {
         const lineData = latestCandle as LineData<Time>;
@@ -71,13 +80,19 @@ const ChartContainer: React.FC<ChartContainerProps> = ({
         const change = lineData.value - prevValue;
         const changePercent = (change / prevValue) * 100;
         
+        // Get volume from the original candle data if available
+        const volumeData = candles.length > 0 ? 
+          (candles[candles.length - 1] as any).tick_volume || 
+          (candles[candles.length - 1] as any).volume || 0 : 0;
+        
         setOhlcData({
           open: lineData.value,
           high: lineData.value,
           low: lineData.value,
           close: lineData.value,
           change,
-          changePercent
+          changePercent,
+          volume: volumeData
         });
       }
     }
@@ -164,6 +179,13 @@ const ChartContainer: React.FC<ChartContainerProps> = ({
               <span className="text-muted-foreground">C</span>
               <span className="text-foreground font-medium ml-1">{ohlcData.close.toFixed(2)}</span>
             </div>
+            {/* Add volume display */}
+            {ohlcData.volume !== undefined && (
+              <div className="flex items-center">
+                <Volume className="h-3.5 w-3.5 text-muted-foreground mr-0.5" />
+                <span className="text-foreground font-medium">{ohlcData.volume.toLocaleString()}</span>
+              </div>
+            )}
           </div>
           <div className="flex items-center gap-2">
             <div className={`${ohlcData.change >= 0 ? 'text-trading-up' : 'text-trading-down'} font-medium`}>
