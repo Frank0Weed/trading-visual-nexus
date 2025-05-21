@@ -3,6 +3,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { CandlestickData, LineData, Time } from 'lightweight-charts';
 import Chart, { ChartType } from '../Chart';
 import { PriceData, CandleData } from '@/services/apiService';
+import { Card } from '@/components/ui/card';
 
 interface ChartContainerProps {
   isLoading: boolean;
@@ -143,28 +144,28 @@ const ChartContainer: React.FC<ChartContainerProps> = ({
 
   return (
     <div className="flex-1 p-0 relative rounded-lg border border-border bg-trading-bg-dark overflow-hidden">
-      {/* OHLC data bar at the top of chart */}
+      {/* Improved OHLC data bar at the top of chart */}
       {ohlcData && !isLoading && (
-        <div className="absolute top-0 left-0 right-0 z-20 flex items-center justify-between px-4 py-1.5 bg-sidebar-secondary border-b border-border text-xs font-mono">
-          <div className="flex items-center space-x-4">
-            <div>
-              <span className="text-muted-foreground mr-1">O:</span>
-              <span className="text-foreground font-medium">{ohlcData.open.toFixed(2)}</span>
+        <div className="flex items-center justify-between px-3 py-1.5 bg-sidebar-secondary border-b border-border z-20 text-xs font-mono">
+          <div className="flex items-center gap-3">
+            <div className="flex items-center">
+              <span className="text-muted-foreground">O</span>
+              <span className="text-foreground font-medium ml-1">{ohlcData.open.toFixed(2)}</span>
             </div>
-            <div>
-              <span className="text-muted-foreground mr-1">H:</span>
-              <span className="text-trading-up font-medium">{ohlcData.high.toFixed(2)}</span>
+            <div className="flex items-center">
+              <span className="text-muted-foreground">H</span>
+              <span className="text-trading-up font-medium ml-1">{ohlcData.high.toFixed(2)}</span>
             </div>
-            <div>
-              <span className="text-muted-foreground mr-1">L:</span>
-              <span className="text-trading-down font-medium">{ohlcData.low.toFixed(2)}</span>
+            <div className="flex items-center">
+              <span className="text-muted-foreground">L</span>
+              <span className="text-trading-down font-medium ml-1">{ohlcData.low.toFixed(2)}</span>
             </div>
-            <div>
-              <span className="text-muted-foreground mr-1">C:</span>
-              <span className="text-foreground font-medium">{ohlcData.close.toFixed(2)}</span>
+            <div className="flex items-center">
+              <span className="text-muted-foreground">C</span>
+              <span className="text-foreground font-medium ml-1">{ohlcData.close.toFixed(2)}</span>
             </div>
           </div>
-          <div className="flex items-center space-x-2">
+          <div className="flex items-center gap-2">
             <div className={`${ohlcData.change >= 0 ? 'text-trading-up' : 'text-trading-down'} font-medium`}>
               {ohlcData.change >= 0 ? '+' : ''}{ohlcData.change.toFixed(2)}
             </div>
@@ -193,15 +194,15 @@ const ChartContainer: React.FC<ChartContainerProps> = ({
         />
       )}
       
-      {/* Latest price badge with color indication for price movement */}
+      {/* Latest price ticker - shown as a small pill instead of a card */}
       {latestPrice && !isLoading && (
         <div 
-          className={`absolute top-10 right-2 text-sm font-medium py-1 px-3 rounded z-20 transition-all duration-300 ${
+          className={`absolute top-8 right-2 text-xs font-medium py-0.5 px-2 rounded z-20 transition-colors duration-200 ${
             prevPriceRef.current && latestPrice.bid > prevPriceRef.current 
-              ? 'bg-trading-up text-white' 
+              ? 'bg-trading-up/80 text-white' 
               : prevPriceRef.current && latestPrice.bid < prevPriceRef.current
-                ? 'bg-trading-down text-white'
-                : 'bg-primary text-primary-foreground'
+                ? 'bg-trading-down/80 text-white'
+                : 'bg-sidebar-secondary text-foreground'
           }`}
         >
           {latestPrice.bid.toFixed(2)}
