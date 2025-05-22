@@ -199,48 +199,55 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
               const existingCandle = latestCandles[symbol]?.[currentTimeframe];
               
               // Only update if we have an existing candle and it's for the current period
-              // Fix: Ensure we compare numbers by converting to number type
-              if (existingCandle && Number(existingCandle.time) === currentPeriodStart) {
-                const updatedCandle = {
-                  ...existingCandle,
-                  high: Math.max(existingCandle.high, price),
-                  low: Math.min(existingCandle.low, price),
-                  close: price,
-                  tick_volume: existingCandle.tick_volume + 1,
-                  volume: (existingCandle.volume || existingCandle.tick_volume) + 1
-                };
+              if (existingCandle) {
+                // Convert time values to numbers for safe comparison
+                const existingCandleTime = typeof existingCandle.time === 'string' 
+                  ? parseInt(existingCandle.time, 10) 
+                  : existingCandle.time;
                 
-                setLatestCandles(prev => {
-                  const symbolCandles = prev[symbol] || {};
-                  return {
-                    ...prev,
-                    [symbol]: {
-                      ...symbolCandles,
-                      [currentTimeframe]: updatedCandle
-                    }
+                // Only update if the candle is for the current period
+                if (existingCandleTime === currentPeriodStart) {
+                  const updatedCandle = {
+                    ...existingCandle,
+                    high: Math.max(existingCandle.high, price),
+                    low: Math.min(existingCandle.low, price),
+                    close: price,
+                    tick_volume: existingCandle.tick_volume + 1,
+                    volume: (existingCandle.volume || existingCandle.tick_volume) + 1
                   };
-                });
-              } else if (!existingCandle || Number(existingCandle.time) < currentPeriodStart) {
-                // If we don't have a candle for this period yet, create one
-                console.log(`No candle for current period, creating new one for ${symbol} at ${new Date(currentPeriodStart * 1000).toLocaleTimeString()}`);
-                const newCandle = createNewCandle(symbol, currentTimeframe, price);
-                
-                setLatestCandles(prev => {
-                  const symbolCandles = prev[symbol] || {};
-                  return {
+                  
+                  setLatestCandles(prev => {
+                    const symbolCandles = prev[symbol] || {};
+                    return {
+                      ...prev,
+                      [symbol]: {
+                        ...symbolCandles,
+                        [currentTimeframe]: updatedCandle
+                      }
+                    };
+                  });
+                } else if (existingCandleTime < currentPeriodStart) {
+                  // If we don't have a candle for this period yet, create one
+                  console.log(`No candle for current period, creating new one for ${symbol} at ${new Date(currentPeriodStart * 1000).toLocaleTimeString()}`);
+                  const newCandle = createNewCandle(symbol, currentTimeframe, price);
+                  
+                  setLatestCandles(prev => {
+                    const symbolCandles = prev[symbol] || {};
+                    return {
+                      ...prev,
+                      [symbol]: {
+                        ...symbolCandles,
+                        [currentTimeframe]: newCandle
+                      }
+                    };
+                  });
+                  
+                  // Update the last candle time
+                  setLastCandleTimes(prev => ({
                     ...prev,
-                    [symbol]: {
-                      ...symbolCandles,
-                      [currentTimeframe]: newCandle
-                    }
-                  };
-                });
-                
-                // Update the last candle time
-                setLastCandleTimes(prev => ({
-                  ...prev,
-                  [key]: currentPeriodStart
-                }));
+                    [key]: currentPeriodStart
+                  }));
+                }
               }
             }
           }
@@ -255,9 +262,9 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
             return;
           }
           
-          // Create a properly structured candle object
+          // Create a properly structured candle object with explicit number conversions
           const parsedCandle: CandleData = {
-            time: candle.time ? Number(candle.time) : Math.floor(Date.now() / 1000), // Ensure time is a number
+            time: typeof candle.time === 'string' ? parseInt(candle.time, 10) : Number(candle.time),
             open: parseFloat(candle.open) || 0,
             high: parseFloat(candle.high) || 0,
             low: parseFloat(candle.low) || 0,
@@ -270,14 +277,14 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
           
           console.log(`Received server candle for ${symbol} ${timeframe} at ${new Date().toLocaleTimeString()}: open=${parsedCandle.open}, close=${parsedCandle.close}`);
           
-          // Update the last candle time for this symbol and timeframe - fix the type casting
+          // Update the last candle time for this symbol and timeframe - with explicit Number conversion
           const key = `${symbol}-${timeframe}`;
-          setLastCandleTimes(prev => {
-            const newLastCandleTimes = {...prev};
-            // Ensure we store the time as a number
-            newLastCandleTimes[key] = Number(parsedCandle.time);
-            return newLastCandleTimes;
-          });
+          const candleTime = Number(parsedCandle.time);
+          
+          setLastCandleTimes(prev => ({
+            ...prev,
+            [key]: candleTime
+          }));
           
           // Update the candle in our state
           setLatestCandles(prev => {
