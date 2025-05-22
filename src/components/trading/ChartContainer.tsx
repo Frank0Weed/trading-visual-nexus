@@ -1,11 +1,10 @@
-
 import React, { useEffect, useRef, useState } from 'react';
 import { CandlestickData, LineData, Time } from 'lightweight-charts';
 import Chart, { ChartType } from '../Chart';
 import { PriceData, CandleData } from '@/services/apiService';
 import { Card } from '@/components/ui/card';
 import { ChartContainer as UIChartContainer } from '@/components/ui/chart';
-import { BarChart, Chart as ChartIcon, Volume } from 'lucide-react';
+import { BarChart, LineChart, Volume } from 'lucide-react';
 
 interface ChartContainerProps {
   isLoading: boolean;
