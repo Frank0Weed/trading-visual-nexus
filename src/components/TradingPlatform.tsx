@@ -20,6 +20,7 @@ const TradingPlatform: React.FC = () => {
   const [chartType, setChartType] = useState<ChartType>('candlestick');
   const [activeIndicators, setActiveIndicators] = useState<string[]>([]);
   const [lastConnectionCheck, setLastConnectionCheck] = useState<number>(Date.now());
+  const [lastTimeframeChange, setLastTimeframeChange] = useState<number>(Date.now());
 
   // Initialize market data
   const { 
@@ -89,8 +90,14 @@ const TradingPlatform: React.FC = () => {
   }, []);
 
   const handleTimeframeChange = useCallback((timeframe: string) => {
-    setSelectedTimeframe(timeframe);
-  }, []);
+    // Only process if actually changed or if sufficient time has passed since last change
+    const now = Date.now();
+    if (timeframe !== selectedTimeframe && now - lastTimeframeChange > 1000) {
+      console.log(`Changing timeframe from ${selectedTimeframe} to ${timeframe}`);
+      setSelectedTimeframe(timeframe);
+      setLastTimeframeChange(now);
+    }
+  }, [selectedTimeframe, lastTimeframeChange]);
 
   const handleChartTypeChange = useCallback((type: ChartType) => {
     setChartType(type);

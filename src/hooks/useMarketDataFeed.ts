@@ -256,7 +256,7 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
           
           // Create a properly structured candle object
           const parsedCandle: CandleData = {
-            time: candle.time || Math.floor(Date.now() / 1000),
+            time: candle.time ? Number(candle.time) : Math.floor(Date.now() / 1000), // Ensure time is a number
             open: parseFloat(candle.open) || 0,
             high: parseFloat(candle.high) || 0,
             low: parseFloat(candle.low) || 0,
@@ -273,7 +273,7 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
           const key = `${symbol}-${timeframe}`;
           setLastCandleTimes(prev => ({
             ...prev,
-            [key]: Number(parsedCandle.time)
+            [key]: parsedCandle.time
           }));
           
           // Update the candle in our state

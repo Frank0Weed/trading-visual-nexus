@@ -1,4 +1,3 @@
-
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { toast } from '@/components/ui/sonner';
 import { 
@@ -72,6 +71,21 @@ const formatCandleData = (candles: CandleData[], chartType: ChartType): Candlest
   }
 };
 
+// Helper to ensure time values are unique in data array
+const ensureUniqueTimestamps = <T extends {time: Time}>(data: T[]): T[] => {
+  const uniqueTimeMap = new Map<number, T>();
+  
+  // Use Map to keep only one entry per timestamp
+  data.forEach(item => {
+    const timeValue = Number(item.time);
+    uniqueTimeMap.set(timeValue, item);
+  });
+  
+  // Convert Map values to array and sort by time
+  return Array.from(uniqueTimeMap.values())
+    .sort((a, b) => Number(a.time) - Number(b.time));
+};
+
 export const useChartData = ({ 
   selectedSymbol, 
   selectedTimeframe, 
@@ -86,6 +100,7 @@ export const useChartData = ({
   const lastPriceUpdateTimeRef = useRef<number>(0);
   const updateRateRef = useRef<number>(0);
   const latestCandleTimeRef = useRef<number | null>(null);
+  const processedCandleTimesRef = useRef<Set<number>>(new Set());
 
   // Fetch candles when symbol or timeframe changes
   useEffect(() => {
@@ -96,15 +111,20 @@ export const useChartData = ({
         const data = await fetchCandles(selectedSymbol, selectedTimeframe, 500);
         
         // Format the data to match Chart component requirements
-        const formattedData = formatCandleData(data, chartType);
+        let formattedData = formatCandleData(data, chartType);
+        
+        // Ensure each timestamp appears only once in the data
+        formattedData = ensureUniqueTimestamps(formattedData);
+        
         setCandles(formattedData);
         
+        // Reset the processed candle times
+        processedCandleTimesRef.current = new Set();
+        
         // Initialize the current candle period
-        if (data.length > 0) {
-          const lastCandle = data[data.length - 1];
-          const timeValue = typeof lastCandle.time === 'string' 
-            ? new Date(lastCandle.time).getTime() / 1000
-            : lastCandle.time;
+        if (formattedData.length > 0) {
+          const lastCandle = formattedData[formattedData.length - 1];
+          const timeValue = Number(lastCandle.time);
             
           currentCandlePeriodRef.current = Math.floor(timeValue / getTimeframeIntervalSeconds(selectedTimeframe));
           latestCandleTimeRef.current = timeValue;
@@ -122,6 +142,13 @@ export const useChartData = ({
     if (selectedSymbol && selectedTimeframe) {
       loadCandles();
     }
+    
+    // Reset refs when symbol or timeframe changes
+    return () => {
+      currentCandlePeriodRef.current = null;
+      latestCandleTimeRef.current = null;
+      processedCandleTimesRef.current = new Set();
+    };
   }, [selectedSymbol, selectedTimeframe, chartType]);
 
   // Update the latest candle when new data arrives
@@ -135,8 +162,15 @@ export const useChartData = ({
       ? new Date(candle.time).getTime() / 1000
       : candle.time;
     
-    // Store the latest candle time
+    // Check if we've already processed this candle time to prevent duplicates
+    if (processedCandleTimesRef.current.has(timeValue)) {
+      console.log(`Skipping duplicate candle at time ${new Date(timeValue * 1000).toLocaleTimeString()}`);
+      return;
+    }
+    
+    // Store the latest candle time and mark as processed
     latestCandleTimeRef.current = timeValue;
+    processedCandleTimesRef.current.add(timeValue);
     
     const candlePeriod = Math.floor(timeValue / getTimeframeIntervalSeconds(selectedTimeframe));
     
@@ -153,7 +187,7 @@ export const useChartData = ({
       
       if (chartType === 'line' || chartType === 'area') {
         // Type cast the array to ensure TypeScript knows it's LineData
-        const lineCandles = prevCandles as LineData<Time>[];
+        let lineCandles = prevCandles as LineData<Time>[];
         
         // Find the candle with matching timestamp
         const candleIndex = lineCandles.findIndex(c => Number(c.time) === timeValue);
@@ -168,17 +202,15 @@ export const useChartData = ({
           console.log(`Updating existing line candle at time ${new Date(timeValue * 1000).toLocaleTimeString()} with value ${candle.close}`);
           const updatedCandles = [...lineCandles];
           updatedCandles[candleIndex] = lineCandle;
-          return updatedCandles;
+          return ensureUniqueTimestamps(updatedCandles);
         } else {
           // Add new candle
           console.log(`Adding new line candle at time: ${new Date(timeValue * 1000).toLocaleTimeString()} with value ${candle.close}`);
-          return [...lineCandles, lineCandle].sort((a, b) => 
-            Number(a.time) - Number(b.time)
-          );
+          return ensureUniqueTimestamps([...lineCandles, lineCandle]);
         }
       } else {
         // Type cast the array to ensure TypeScript knows it's CandlestickData
-        const candlestickCandles = prevCandles as CandlestickData<Time>[];
+        let candlestickCandles = prevCandles as CandlestickData<Time>[];
         
         // Find the candle with matching timestamp
         const candleIndex = candlestickCandles.findIndex(c => Number(c.time) === timeValue);
@@ -196,13 +228,11 @@ export const useChartData = ({
           console.log(`Updating existing candlestick at time ${new Date(timeValue * 1000).toLocaleTimeString()}: open=${candle.open}, close=${candle.close}`);
           const updatedCandles = [...candlestickCandles];
           updatedCandles[candleIndex] = candlestickData;
-          return updatedCandles;
+          return ensureUniqueTimestamps(updatedCandles);
         } else {
           // Add new candle
           console.log(`Adding new candlestick at time: ${new Date(timeValue * 1000).toLocaleTimeString()}: open=${candle.open}, close=${candle.close}`);
-          return [...candlestickCandles, candlestickData].sort((a, b) => 
-            Number(a.time) - Number(b.time)
-          );
+          return ensureUniqueTimestamps([...candlestickCandles, candlestickData]);
         }
       }
     });
@@ -236,6 +266,15 @@ export const useChartData = ({
       console.log(`New period detected in updateLatestPrice: ${currentPeriod} (previous: ${currentCandlePeriodRef.current})`);
       console.log(`Current time: ${new Date(currentTimeMs).toLocaleTimeString()}, New candle start: ${new Date(currentPeriodStartTime * 1000).toLocaleTimeString()}`);
       
+      // Check if we've already processed this candle time to prevent duplicates
+      if (processedCandleTimesRef.current.has(currentPeriodStartTime)) {
+        console.log(`Skipping duplicate candle creation at ${new Date(currentPeriodStartTime * 1000).toLocaleTimeString()}`);
+        return;
+      }
+      
+      // Mark this time as processed
+      processedCandleTimesRef.current.add(currentPeriodStartTime);
+      
       // Create a new candle
       if (chartType === 'line' || chartType === 'area') {
         setCandles(prevCandles => {
@@ -249,10 +288,8 @@ export const useChartData = ({
           
           console.log(`Creating new line candle for period ${currentPeriod} at time ${new Date(currentPeriodStartTime * 1000).toLocaleTimeString()} with value ${price}`);
           
-          // Add the new candle
-          return [...lineCandles, newCandle].sort((a, b) => 
-            Number(a.time) - Number(b.time)
-          );
+          // Add the new candle and ensure unique timestamps
+          return ensureUniqueTimestamps([...lineCandles, newCandle]);
         });
       } else {
         setCandles(prevCandles => {
@@ -270,10 +307,8 @@ export const useChartData = ({
           console.log(`Creating new candlestick for period ${currentPeriod} at time ${new Date(currentPeriodStartTime * 1000).toLocaleTimeString()}`);
           console.log(`New candle data: open=${price}, high=${price}, low=${price}, close=${price}`);
           
-          // Add the new candle
-          return [...candlestickCandles, newCandle].sort((a, b) => 
-            Number(a.time) - Number(b.time)
-          );
+          // Add the new candle and ensure unique timestamps
+          return ensureUniqueTimestamps([...candlestickCandles, newCandle]);
         });
       }
       
@@ -296,10 +331,13 @@ export const useChartData = ({
           
           lastCandle.value = price;
           
-          return [
+          // Return updated candles with the last one modified
+          const updatedCandles = [
             ...lineCandles.slice(0, -1),
             lastCandle
           ];
+          
+          return updatedCandles;
         });
       } else {
         setCandles(prevCandles => {
@@ -320,10 +358,13 @@ export const useChartData = ({
           
           lastCandle.close = price;
           
-          return [
+          // Return updated candles with the last one modified
+          const updatedCandles = [
             ...candlestickCandles.slice(0, -1),
             lastCandle
           ];
+          
+          return updatedCandles;
         });
       }
       
