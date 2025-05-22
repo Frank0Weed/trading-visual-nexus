@@ -15,22 +15,30 @@ interface MarketDataFeedResult {
   connectionStatus: string;
   readyState: ReadyState;
   sendMessage: (message: string) => void;
+  lastMessageTime: number;
 }
 
 export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFeedProps): MarketDataFeedResult => {
   const [prices, setPrices] = useState<Record<string, PriceData>>({});
   const [latestCandles, setLatestCandles] = useState<Record<string, Record<string, CandleData>>>({});
   const [lastCandleTimes, setLastCandleTimes] = useState<Record<string, number>>({});
+  const [lastMessageTime, setLastMessageTime] = useState<number>(Date.now());
   
   const { sendMessage, lastMessage, readyState } = useWebSocket(getWebSocketUrl(), {
     shouldReconnect: () => true,
     reconnectAttempts: 10,
     reconnectInterval: 3000,
     onOpen: () => {
-      console.log('WebSocket connection established');
+      console.log('WebSocket connection established at:', new Date().toISOString());
+      toast.success('Market data connection established');
     },
     onError: () => {
-      toast.error('WebSocket connection error');
+      console.error('WebSocket connection error at:', new Date().toISOString());
+      toast.error('Market data connection error');
+    },
+    onClose: () => {
+      console.warn('WebSocket connection closed at:', new Date().toISOString());
+      toast.warning('Market data connection closed, attempting to reconnect...');
     }
   });
 
@@ -77,14 +85,15 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
       close: price,
       tick_volume: 1,
       spread: 0,
-      real_volume: 1
+      real_volume: 1,
+      volume: 1 // Added volume field for consistency
     };
   };
 
   // Subscribe to symbol updates via WebSocket
   const subscribeToSymbols = useCallback(() => {
     if (readyState === ReadyState.OPEN && symbols.length > 0) {
-      console.log('Subscribing to symbols:', symbols);
+      console.log('Subscribing to symbols:', symbols, 'at:', new Date().toISOString());
       // Subscribe to all symbols
       sendMessage(JSON.stringify({
         type: 'subscribe',
@@ -93,7 +102,7 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
       
       // If we have a current timeframe, subscribe to candle updates too
       if (currentTimeframe) {
-        console.log(`Subscribing to candles for timeframe: ${currentTimeframe}`);
+        console.log(`Subscribing to candles for timeframe: ${currentTimeframe}`, 'at:', new Date().toISOString());
         sendMessage(JSON.stringify({
           type: 'subscribe_candles',
           symbols: symbols,
@@ -120,6 +129,7 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
     // Debug logging for candle periods
     if (lastCandlePeriod < currentPeriod) {
       console.log(`Time for new candle: Last period ${lastCandlePeriod}, Current period ${currentPeriod} for ${symbol} ${timeframe}`);
+      console.log(`Last candle time: ${new Date(lastCandleTime * 1000).toLocaleTimeString()}, Current time: ${new Date(currentTime * 1000).toLocaleTimeString()}`);
     }
     
     // Create new candle if we've moved to a new period
@@ -132,6 +142,9 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
       try {
         const data = JSON.parse(lastMessage.data);
         const currentTime = Math.floor(Date.now() / 1000);
+        
+        // Update last message time
+        setLastMessageTime(Date.now());
         
         // Handle price updates
         if (data.type === 'price_update') {
@@ -147,7 +160,7 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
             const key = `${symbol}-${currentTimeframe}`;
             
             if (shouldCreateNewCandle(symbol, currentTimeframe, currentTime)) {
-              console.log(`Time for new ${currentTimeframe} candle for ${symbol}`);
+              console.log(`Time for new ${currentTimeframe} candle for ${symbol} at ${new Date(currentTime * 1000).toLocaleTimeString()}`);
               
               // Create a new candle
               const newCandle = createNewCandle(symbol, currentTimeframe, price);
@@ -165,10 +178,9 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
               });
               
               // Update the last candle time for this symbol and timeframe
-              // Ensure we're storing only numbers in lastCandleTimes
               setLastCandleTimes(prev => ({
                 ...prev,
-                [key]: Number(newCandle.time) // Explicitly convert to number
+                [key]: Number(newCandle.time)
               }));
             } else {
               // If we have an existing candle for this time period, update it with the new price
@@ -183,7 +195,8 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
                   high: Math.max(existingCandle.high, price),
                   low: Math.min(existingCandle.low, price),
                   close: price,
-                  tick_volume: existingCandle.tick_volume + 1
+                  tick_volume: existingCandle.tick_volume + 1,
+                  volume: (existingCandle.volume || existingCandle.tick_volume) + 1 // Update volume as well
                 };
                 
                 setLatestCandles(prev => {
@@ -219,16 +232,17 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
             close: parseFloat(candle.close) || 0,
             tick_volume: parseInt(candle.tick_volume) || 0,
             spread: parseFloat(candle.spread) || 0,
-            real_volume: parseInt(candle.real_volume) || 0
+            real_volume: parseInt(candle.real_volume) || 0,
+            volume: parseInt(candle.volume || candle.tick_volume) || 0 // Ensure volume is always set
           };
           
-          console.log(`Received server candle for ${symbol} ${timeframe}:`, parsedCandle);
+          console.log(`Received server candle for ${symbol} ${timeframe} at ${new Date().toLocaleTimeString()}:`, parsedCandle);
           
           // Update the last candle time for this symbol and timeframe
           const key = `${symbol}-${timeframe}`;
           setLastCandleTimes(prev => ({
             ...prev,
-            [key]: Number(parsedCandle.time) // Explicitly convert to number
+            [key]: Number(parsedCandle.time)
           }));
           
           // Update the candle in our state
@@ -247,12 +261,30 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
         console.error('Error parsing WebSocket message:', error);
       }
     }
-  }, [lastMessage, prices, currentTimeframe, latestCandles]);
+  }, [lastMessage, currentTimeframe, latestCandles]);
 
   // Initial subscription
   useEffect(() => {
     subscribeToSymbols();
-  }, [subscribeToSymbols]);
+    
+    // Set up heartbeat to check connection
+    const heartbeatInterval = setInterval(() => {
+      if (readyState === ReadyState.OPEN) {
+        sendMessage(JSON.stringify({ type: 'ping' }));
+        
+        // Check if we haven't received a message in over 30 seconds
+        const now = Date.now();
+        if (now - lastMessageTime > 30000) {
+          console.warn('No messages received in 30 seconds, attempting to reconnect...');
+          toast.warning('Connection seems slow, attempting to reconnect...');
+          // Attempt to resubscribe
+          subscribeToSymbols();
+        }
+      }
+    }, 15000); // Check every 15 seconds
+    
+    return () => clearInterval(heartbeatInterval);
+  }, [subscribeToSymbols, readyState, sendMessage, lastMessageTime]);
 
   // When first mounted and readyState becomes open, initialize lastCandleTimes for each symbol
   useEffect(() => {
@@ -260,6 +292,8 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
       const now = Math.floor(Date.now() / 1000);
       const intervalSeconds = getTimeframeIntervalSeconds(currentTimeframe);
       const currentPeriodStart = Math.floor(now / intervalSeconds) * intervalSeconds;
+      
+      console.log(`Initializing lastCandleTimes for ${symbols.length} symbols with currentPeriodStart: ${new Date(currentPeriodStart * 1000).toLocaleTimeString()}`);
       
       // Initialize last candle times for all symbols
       const initialCandleTimes: Record<string, number> = {};
@@ -275,7 +309,7 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
   // Resubscribe when timeframe changes
   useEffect(() => {
     if (currentTimeframe && readyState === ReadyState.OPEN) {
-      console.log(`Timeframe changed to ${currentTimeframe}, resubscribing...`);
+      console.log(`Timeframe changed to ${currentTimeframe}, resubscribing at ${new Date().toLocaleTimeString()}...`);
       
       // Unsubscribe from old candle feeds first
       sendMessage(JSON.stringify({
@@ -313,6 +347,7 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
     latestCandles,
     connectionStatus, 
     readyState,
-    sendMessage 
+    sendMessage,
+    lastMessageTime
   };
 };

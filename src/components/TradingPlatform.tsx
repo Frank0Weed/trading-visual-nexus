@@ -11,6 +11,7 @@ import ChartContainer from './trading/ChartContainer';
 import { useMarketInitialization } from '../hooks/useMarketInitialization';
 import { useMarketDataFeed } from '../hooks/useMarketDataFeed';
 import { useChartData } from '../hooks/useChartData';
+import { toast } from '@/components/ui/sonner';
 
 const TradingPlatform: React.FC = () => {
   // State for user selections
@@ -18,6 +19,7 @@ const TradingPlatform: React.FC = () => {
   const [selectedTimeframe, setSelectedTimeframe] = useState<string>('M1');
   const [chartType, setChartType] = useState<ChartType>('candlestick');
   const [activeIndicators, setActiveIndicators] = useState<string[]>([]);
+  const [lastConnectionCheck, setLastConnectionCheck] = useState<number>(Date.now());
 
   // Initialize market data
   const { 
@@ -32,7 +34,8 @@ const TradingPlatform: React.FC = () => {
     prices, 
     latestCandles,
     connectionStatus, 
-    readyState 
+    readyState,
+    lastMessageTime
   } = useMarketDataFeed({ 
     symbols,
     currentTimeframe: selectedTimeframe
@@ -53,6 +56,23 @@ const TradingPlatform: React.FC = () => {
     chartType,
     latestCandle
   });
+
+  // Monitor connection health
+  useEffect(() => {
+    const CHECK_INTERVAL = 30000; // 30 seconds
+    const connectionMonitor = setInterval(() => {
+      const now = Date.now();
+      // Check if we haven't received a message in over 60 seconds
+      if (now - lastMessageTime > 60000 && readyState !== ReadyState.CONNECTING) {
+        if (now - lastConnectionCheck > CHECK_INTERVAL) {
+          toast.warning("No market data received recently. Check your connection.");
+          setLastConnectionCheck(now);
+        }
+      }
+    }, CHECK_INTERVAL);
+    
+    return () => clearInterval(connectionMonitor);
+  }, [lastMessageTime, readyState, lastConnectionCheck]);
 
   // Event handlers
   const handleSymbolSelect = useCallback((symbol: string) => {
