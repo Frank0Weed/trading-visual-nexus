@@ -75,7 +75,7 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
     // This ensures the candle start time is properly aligned to the timeframe intervals
     const candleStartTime = Math.floor(currentTime / intervalSeconds) * intervalSeconds;
     
-    console.log(`Creating new ${timeframe} candle for ${symbol} at time: ${new Date(candleStartTime * 1000).toLocaleTimeString()}`);
+    console.log(`Creating new ${timeframe} candle for ${symbol} at time: ${new Date(candleStartTime * 1000).toLocaleTimeString()}, opening price: ${price}`);
     
     return {
       time: candleStartTime,
@@ -86,7 +86,7 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
       tick_volume: 1,
       spread: 0,
       real_volume: 1,
-      volume: 1 // Added volume field for consistency
+      volume: 1 
     };
   };
 
@@ -148,19 +148,29 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
         
         // Handle price updates
         if (data.type === 'price_update') {
+          const symbol = data.symbol;
+          const priceData = data.data;
+          
+          if (!symbol || !priceData) {
+            console.warn('Received incomplete price update:', data);
+            return;
+          }
+          
           setPrices(prev => ({
             ...prev,
-            [data.symbol]: data.data
+            [symbol]: priceData
           }));
           
           // Check if we need to create a new candle based on the current time
-          if (data.symbol && currentTimeframe && data.data) {
-            const symbol = data.symbol;
-            const price = data.data.bid;
+          if (currentTimeframe) {
+            const price = priceData.bid;
             const key = `${symbol}-${currentTimeframe}`;
+            const intervalSeconds = getTimeframeIntervalSeconds(currentTimeframe);
+            const currentPeriodStart = Math.floor(currentTime / intervalSeconds) * intervalSeconds;
             
+            // First check if we should create a new candle
             if (shouldCreateNewCandle(symbol, currentTimeframe, currentTime)) {
-              console.log(`Time for new ${currentTimeframe} candle for ${symbol} at ${new Date(currentTime * 1000).toLocaleTimeString()}`);
+              console.log(`Creating new ${currentTimeframe} candle for ${symbol} at ${new Date(currentTime * 1000).toLocaleTimeString()}, opening at ${price}`);
               
               // Create a new candle
               const newCandle = createNewCandle(symbol, currentTimeframe, price);
@@ -180,15 +190,15 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
               // Update the last candle time for this symbol and timeframe
               setLastCandleTimes(prev => ({
                 ...prev,
-                [key]: Number(newCandle.time)
+                [key]: currentPeriodStart
               }));
+              
+              console.log(`New candle period started: ${new Date(currentPeriodStart * 1000).toLocaleTimeString()} with price ${price}`);
             } else {
               // If we have an existing candle for this time period, update it with the new price
               const existingCandle = latestCandles[symbol]?.[currentTimeframe];
-              const intervalSeconds = getTimeframeIntervalSeconds(currentTimeframe);
-              const currentPeriodStart = Math.floor(currentTime / intervalSeconds) * intervalSeconds;
               
-              // Only update if the candle is for the current period
+              // Only update if we have an existing candle and it's for the current period
               if (existingCandle && existingCandle.time === currentPeriodStart) {
                 const updatedCandle = {
                   ...existingCandle,
@@ -196,7 +206,7 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
                   low: Math.min(existingCandle.low, price),
                   close: price,
                   tick_volume: existingCandle.tick_volume + 1,
-                  volume: (existingCandle.volume || existingCandle.tick_volume) + 1 // Update volume as well
+                  volume: (existingCandle.volume || existingCandle.tick_volume) + 1
                 };
                 
                 setLatestCandles(prev => {
@@ -209,6 +219,27 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
                     }
                   };
                 });
+              } else if (!existingCandle || existingCandle.time < currentPeriodStart) {
+                // If we don't have a candle for this period yet, create one
+                console.log(`No candle for current period, creating new one for ${symbol} at ${new Date(currentPeriodStart * 1000).toLocaleTimeString()}`);
+                const newCandle = createNewCandle(symbol, currentTimeframe, price);
+                
+                setLatestCandles(prev => {
+                  const symbolCandles = prev[symbol] || {};
+                  return {
+                    ...prev,
+                    [symbol]: {
+                      ...symbolCandles,
+                      [currentTimeframe]: newCandle
+                    }
+                  };
+                });
+                
+                // Update the last candle time
+                setLastCandleTimes(prev => ({
+                  ...prev,
+                  [key]: currentPeriodStart
+                }));
               }
             }
           }
@@ -233,10 +264,10 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
             tick_volume: parseInt(candle.tick_volume) || 0,
             spread: parseFloat(candle.spread) || 0,
             real_volume: parseInt(candle.real_volume) || 0,
-            volume: parseInt(candle.volume || candle.tick_volume) || 0 // Ensure volume is always set
+            volume: parseInt(candle.volume || candle.tick_volume) || 0
           };
           
-          console.log(`Received server candle for ${symbol} ${timeframe} at ${new Date().toLocaleTimeString()}:`, parsedCandle);
+          console.log(`Received server candle for ${symbol} ${timeframe} at ${new Date().toLocaleTimeString()}: open=${parsedCandle.open}, close=${parsedCandle.close}`);
           
           // Update the last candle time for this symbol and timeframe
           const key = `${symbol}-${timeframe}`;
@@ -263,14 +294,14 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
     }
   }, [lastMessage, currentTimeframe, latestCandles]);
 
-  // Initial subscription
+  // Initial subscription and heartbeat setup
   useEffect(() => {
     subscribeToSymbols();
     
     // Set up heartbeat to check connection
     const heartbeatInterval = setInterval(() => {
       if (readyState === ReadyState.OPEN) {
-        sendMessage(JSON.stringify({ type: 'ping' }));
+        sendMessage(JSON.stringify({ type: 'ping', timestamp: Date.now() }));
         
         // Check if we haven't received a message in over 30 seconds
         const now = Date.now();
@@ -286,25 +317,42 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
     return () => clearInterval(heartbeatInterval);
   }, [subscribeToSymbols, readyState, sendMessage, lastMessageTime]);
 
-  // When first mounted and readyState becomes open, initialize lastCandleTimes for each symbol
+  // Initialize lastCandleTimes for each symbol when first mounted
   useEffect(() => {
     if (readyState === ReadyState.OPEN && symbols.length > 0 && currentTimeframe) {
       const now = Math.floor(Date.now() / 1000);
       const intervalSeconds = getTimeframeIntervalSeconds(currentTimeframe);
       const currentPeriodStart = Math.floor(now / intervalSeconds) * intervalSeconds;
       
-      console.log(`Initializing lastCandleTimes for ${symbols.length} symbols with currentPeriodStart: ${new Date(currentPeriodStart * 1000).toLocaleTimeString()}`);
+      console.log(`Initializing candle times for ${symbols.length} symbols with currentPeriodStart: ${new Date(currentPeriodStart * 1000).toLocaleTimeString()}`);
       
       // Initialize last candle times for all symbols
       const initialCandleTimes: Record<string, number> = {};
       symbols.forEach(symbol => {
         const key = `${symbol}-${currentTimeframe}`;
         initialCandleTimes[key] = currentPeriodStart;
+        
+        // Also create initial candles for each symbol
+        if (prices[symbol]) {
+          const price = prices[symbol].bid;
+          const newCandle = createNewCandle(symbol, currentTimeframe, price);
+          
+          setLatestCandles(prev => {
+            const symbolCandles = prev[symbol] || {};
+            return {
+              ...prev,
+              [symbol]: {
+                ...symbolCandles,
+                [currentTimeframe]: newCandle
+              }
+            };
+          });
+        }
       });
       
       setLastCandleTimes(initialCandleTimes);
     }
-  }, [readyState, symbols, currentTimeframe]);
+  }, [readyState, symbols, currentTimeframe, prices]);
 
   // Resubscribe when timeframe changes
   useEffect(() => {
@@ -324,15 +372,33 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
         timeframe: currentTimeframe
       }));
       
-      // Reset last candle times for the new timeframe
+      // Reset last candle times for the new timeframe and create new candles
       const now = Math.floor(Date.now() / 1000);
       const intervalSeconds = getTimeframeIntervalSeconds(currentTimeframe);
       const currentPeriodStart = Math.floor(now / intervalSeconds) * intervalSeconds;
       
       const newCandleTimes: Record<string, number> = {};
+      
       symbols.forEach(symbol => {
         const key = `${symbol}-${currentTimeframe}`;
         newCandleTimes[key] = currentPeriodStart;
+        
+        // Create new candles for each symbol if we have price data
+        if (prices[symbol]) {
+          const price = prices[symbol].bid;
+          const newCandle = createNewCandle(symbol, currentTimeframe, price);
+          
+          setLatestCandles(prev => {
+            const symbolCandles = prev[symbol] || {};
+            return {
+              ...prev,
+              [symbol]: {
+                ...symbolCandles,
+                [currentTimeframe]: newCandle
+              }
+            };
+          });
+        }
       });
       
       setLastCandleTimes(prev => ({
@@ -340,7 +406,7 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
         ...newCandleTimes
       }));
     }
-  }, [currentTimeframe, symbols, sendMessage, readyState]);
+  }, [currentTimeframe, symbols, sendMessage, readyState, prices]);
 
   return { 
     prices, 
