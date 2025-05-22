@@ -199,7 +199,8 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
               const existingCandle = latestCandles[symbol]?.[currentTimeframe];
               
               // Only update if we have an existing candle and it's for the current period
-              if (existingCandle && existingCandle.time === currentPeriodStart) {
+              // Fix: Ensure we compare numbers by converting to number type
+              if (existingCandle && Number(existingCandle.time) === currentPeriodStart) {
                 const updatedCandle = {
                   ...existingCandle,
                   high: Math.max(existingCandle.high, price),
@@ -219,7 +220,7 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
                     }
                   };
                 });
-              } else if (!existingCandle || existingCandle.time < currentPeriodStart) {
+              } else if (!existingCandle || Number(existingCandle.time) < currentPeriodStart) {
                 // If we don't have a candle for this period yet, create one
                 console.log(`No candle for current period, creating new one for ${symbol} at ${new Date(currentPeriodStart * 1000).toLocaleTimeString()}`);
                 const newCandle = createNewCandle(symbol, currentTimeframe, price);
@@ -269,12 +270,14 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
           
           console.log(`Received server candle for ${symbol} ${timeframe} at ${new Date().toLocaleTimeString()}: open=${parsedCandle.open}, close=${parsedCandle.close}`);
           
-          // Update the last candle time for this symbol and timeframe
+          // Update the last candle time for this symbol and timeframe - fix the type casting
           const key = `${symbol}-${timeframe}`;
-          setLastCandleTimes(prev => ({
-            ...prev,
-            [key]: parsedCandle.time
-          }));
+          setLastCandleTimes(prev => {
+            const newLastCandleTimes = {...prev};
+            // Ensure we store the time as a number
+            newLastCandleTimes[key] = Number(parsedCandle.time);
+            return newLastCandleTimes;
+          });
           
           // Update the candle in our state
           setLatestCandles(prev => {

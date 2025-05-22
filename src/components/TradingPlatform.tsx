@@ -1,4 +1,3 @@
-
 import React, { useState, useCallback, useEffect } from 'react';
 import { ReadyState } from 'react-use-websocket';
 
@@ -119,6 +118,7 @@ const TradingPlatform: React.FC = () => {
   const latestPrice = currentPrices[selectedSymbol];
 
   return (
+    
     <div className="flex flex-col h-full">
       {/* Header with connection status */}
       <TradingHeader
