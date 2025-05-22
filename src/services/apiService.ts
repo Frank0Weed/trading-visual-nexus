@@ -41,15 +41,19 @@ export const fetchSymbols = async (): Promise<string[]> => {
     const response = await fetch(`${API_BASE_URL}/symbols`);
     const data = await response.json();
     return data.symbols || [];
-  } catch (error) {
+  } catch (error: any) {
     console.error('Failed to fetch symbols:', error);
-    throw error;
+    throw new Error(`Failed to fetch symbols: ${error.message}`);
   }
 };
 
 export const fetchTimeframes = async (): Promise<TimeFrame[]> => {
   try {
     const response = await fetch(`${API_BASE_URL}/timeframes`);
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`API Error (${response.status}): ${errorText}`);
+    }
     const data = await response.json();
     
     // Map timeframes to more descriptive labels
@@ -91,19 +95,30 @@ export const fetchTimeframes = async (): Promise<TimeFrame[]> => {
         label: label
       };
     });
-  } catch (error) {
+  } catch (error: any) {
     console.error('Failed to fetch timeframes:', error);
-    throw error;
+    // If it's already a custom error from !response.ok, rethrow it, otherwise wrap it.
+    if (error.message.startsWith('API Error')) {
+        throw error;
+    }
+    throw new Error(`Failed to fetch timeframes: ${error.message}`);
   }
 };
 
 export const fetchLivePrice = async (symbol: string): Promise<PriceData> => {
   try {
     const response = await fetch(`${API_BASE_URL}/price/${symbol}`);
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`API Error (${response.status}) for ${symbol}: ${errorText}`);
+    }
     return await response.json();
-  } catch (error) {
+  } catch (error: any) {
     console.error(`Failed to fetch price for ${symbol}:`, error);
-    throw error;
+    if (error.message.startsWith('API Error')) {
+        throw error;
+    }
+    throw new Error(`Failed to fetch live price for ${symbol}: ${error.message}`);
   }
 };
 
@@ -155,9 +170,13 @@ export const fetchCandles = async (
       ...candle,
       volume: candle.volume || candle.tick_volume || candle.real_volume || 0
     }));
-  } catch (error) {
+  } catch (error: any) {
     console.error(`Failed to fetch candles for ${symbol} ${timeframe}:`, error);
-    throw error;
+    // If it's already a custom error from !response.ok, rethrow it, otherwise wrap it.
+    if (error.message.startsWith('API returned') || error.message.startsWith('API did not return an array')) {
+        throw error;
+    }
+    throw new Error(`Failed to fetch candles for ${symbol} / ${timeframe}: ${error.message}`);
   }
 };
 

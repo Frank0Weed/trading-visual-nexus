@@ -361,6 +361,51 @@ const calculateEMA = (candles: CandlestickData<Time>[], params = { period: 20 })
   return ema;
 };
 
+// Volume Weighted Average Price (VWAP)
+const calculateVWAP = (candles: CandlestickData<Time> & { volume?: number }[]): (number | null)[] => {
+  if (!candles || candles.length === 0) {
+    return [];
+  }
+
+  const vwapValues: (number | null)[] = [];
+  let cumulativeTypicalPriceVolume = 0;
+  let cumulativeVolume = 0;
+  let currentDay: number | null = null;
+
+  for (let i = 0; i < candles.length; i++) {
+    const candle = candles[i];
+    // Ensure candle has time, high, low, close, and volume
+    if (candle.time === undefined || candle.high === undefined || candle.low === undefined || candle.close === undefined || candle.volume === undefined || candle.volume === 0) {
+      vwapValues.push(vwapValues.length > 0 ? vwapValues[vwapValues.length -1] : null); // Carry forward last value or null
+      continue;
+    }
+
+    const candleDate = new Date(Number(candle.time) * 1000);
+    const dayOfCandle = candleDate.getUTCFullYear() * 10000 + (candleDate.getUTCMonth() + 1) * 100 + candleDate.getUTCDate();
+
+    if (currentDay === null || dayOfCandle !== currentDay) {
+      // New session (new day)
+      currentDay = dayOfCandle;
+      cumulativeTypicalPriceVolume = 0;
+      cumulativeVolume = 0;
+    }
+
+    const typicalPrice = (candle.high + candle.low + candle.close) / 3;
+    const typicalPriceVolume = typicalPrice * candle.volume;
+
+    cumulativeTypicalPriceVolume += typicalPriceVolume;
+    cumulativeVolume += candle.volume;
+
+    if (cumulativeVolume === 0) {
+      vwapValues.push(null); // Avoid division by zero
+    } else {
+      vwapValues.push(cumulativeTypicalPriceVolume / cumulativeVolume);
+    }
+  }
+  return vwapValues;
+};
+
+
 // Define the indicators object with improved colors
 const indicators: Record<string, Indicator> = {
   rsi: {
@@ -505,6 +550,28 @@ const indicators: Record<string, Indicator> = {
       overlay: true,
       priceScaleId: 'right',
       scaleMargins: {
+        top: 0.1,
+        bottom: 0.1
+      }
+    }
+  },
+  vwap: {
+    id: 'vwap',
+    name: 'VWAP (Volume Weighted Average Price)',
+    description: 'Volume-weighted average price, resets daily.',
+    category: 'volume', // Or 'trend'
+    defaultParams: {}, // No specific params for daily VWAP
+    calculate: calculateVWAP,
+    format: (value: number) => value !== null ? `${value.toFixed(2)}` : 'N/A',
+    color: '#FF69B4', // Hot Pink, for example
+    display: 'main', // Display on the main chart panel
+    plotConfig: {
+      type: 'line',
+      lineWidth: 1.5,
+      color: '#FF69B4', 
+      overlay: true, // Overlay on the main series
+      priceScaleId: 'right', // Use the main price scale
+      scaleMargins: { // Default scale margins, adjust if needed
         top: 0.1,
         bottom: 0.1
       }

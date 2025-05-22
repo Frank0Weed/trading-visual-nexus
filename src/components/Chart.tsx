@@ -61,10 +61,14 @@ const Chart: React.FC<ChartProps> = ({
   const seriesRef = useRef<ISeriesApi<"Candlestick"> | ISeriesApi<"Line"> | ISeriesApi<"Bar"> | ISeriesApi<"Area"> | null>(null);
   const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
   const priceLineRef = useRef<any>(null);
-  const indicatorSeriesRef = useRef<Record<string, any>>({});
+  const indicatorSeriesRef = useRef<Record<string, ISeriesApi<any>>>({});
+  const trendlineSeriesRef = useRef<Record<string, ISeriesApi<"Line">>>({});
   const resizeObserverRef = useRef<ResizeObserver | null>(null);
 
   const [isInitialized, setIsInitialized] = useState(false);
+  const [isDrawingModeEnabled, setIsDrawingModeEnabled] = useState(false);
+  const [trendlines, setTrendlines] = useState<Array<{id: string, point1: {time: Time, price: number}, point2: {time: Time, price: number}}>>([]);
+  const [currentTrendlinePoints, setCurrentTrendlinePoints] = useState<Array<{time: Time, price: number}>>([]);
   const [indicators, setIndicators] = useState<Record<string, any>>({});
   const [currentPrice, setCurrentPrice] = useState<number | null>(null);
   const [hoverData, setHoverData] = useState<HoverData>({
@@ -114,6 +118,31 @@ const Chart: React.FC<ChartProps> = ({
         to: visibleLogicalRange.to + rangeSize * 0.25
       };
       timeScale.setVisibleLogicalRange(newRange);
+    }
+  };
+
+  const toggleDrawingMode = () => {
+    setIsDrawingModeEnabled(prev => !prev);
+    setCurrentTrendlinePoints([]); // Reset current points when toggling mode
+    if (chartRef.current) {
+      // Disable crosshair when drawing mode is active, enable when inactive
+      // Also, disable normal click-to-zoom behavior if drawing.
+      chartRef.current.applyOptions({
+        crosshair: {
+          mode: !isDrawingModeEnabled ? CrosshairMode.Normal : CrosshairMode.Hidden,
+        },
+        handleScroll: {
+            mouseWheel: !isDrawingModeEnabled,
+            pressedMouseMove: !isDrawingModeEnabled,
+            horzTouchDrag: !isDrawingModeEnabled,
+            vertTouchDrag: !isDrawingModeEnabled,
+        },
+        handleScale: {
+            mouseWheel: !isDrawingModeEnabled,
+            pinch: !isDrawingModeEnabled,
+            axisPressedMouseMove: !isDrawingModeEnabled,
+        }
+      });
     }
   };
 
@@ -180,6 +209,11 @@ const Chart: React.FC<ChartProps> = ({
       } else if (indicatorId === 'ema' && Array.isArray(indicatorData) && index < indicatorData.length) {
         result[indicatorId] = {
           name: 'EMA',
+          value: indicatorData[index]
+        };
+      } else if (indicatorId === 'vwap' && Array.isArray(indicatorData) && index < indicatorData.length) {
+        result[indicatorId] = {
+          name: 'VWAP', // Make sure this matches the name in indicators.ts if needed, but this is for display
           value: indicatorData[index]
         };
       }
@@ -249,7 +283,7 @@ const Chart: React.FC<ChartProps> = ({
     };
 
     // Create chart
-    const chart = createChart(chartContainerRef.current, {
+    const chartOptions = {
       width: chartContainerRef.current.clientWidth,
       height: height,
       layout: {
@@ -284,18 +318,42 @@ const Chart: React.FC<ChartProps> = ({
         timeVisible: true,
         secondsVisible: false,
       },
-      handleScale: {
+      handleScale: { // Initial state, can be overridden by toggleDrawingMode
         mouseWheel: true,
         pinch: true,
         axisPressedMouseMove: true,
       },
-      handleScroll: {
+      handleScroll: { // Initial state, can be overridden by toggleDrawingMode
         mouseWheel: true,
         pressedMouseMove: true,
         horzTouchDrag: true,
         vertTouchDrag: true,
       },
-    });
+    };
+
+    const chart = createChart(chartContainerRef.current, chartOptions);
+    chartRef.current = chart; // Assign to ref early
+
+    // Apply drawing mode options if active on init
+    if (isDrawingModeEnabled) {
+        chart.applyOptions({
+            crosshair: {
+                mode: CrosshairMode.Hidden,
+            },
+            handleScroll: {
+                mouseWheel: false,
+                pressedMouseMove: false,
+                horzTouchDrag: false,
+                vertTouchDrag: false,
+            },
+            handleScale: {
+                mouseWheel: false,
+                pinch: false,
+                axisPressedMouseMove: false,
+            }
+        });
+    }
+
 
     let series;
 
@@ -360,57 +418,83 @@ const Chart: React.FC<ChartProps> = ({
 
     seriesRef.current = series || null;
     volumeSeriesRef.current = volumeSeries;
-    chartRef.current = chart;
+    // chartRef.current = chart; // Moved up
     
     // Set up mouse move handler for data window
-    chart.subscribeCrosshairMove((param: MouseEventParams) => {
-      if (
-        param.point === undefined ||
-        !param.time ||
-        param.point.x < 0 ||
-        param.point.x > chartContainerRef.current!.clientWidth ||
-        param.point.y < 0 ||
-        param.point.y > chartContainerRef.current!.clientHeight
-      ) {
-        // Mouse is outside the chart
+    if (!isDrawingModeEnabled) { // Only subscribe if not in drawing mode
+      chart.subscribeCrosshairMove((param: MouseEventParams) => {
+        if (
+          param.point === undefined ||
+          !param.time ||
+          param.point.x < 0 ||
+          param.point.x > chartContainerRef.current!.clientWidth ||
+          param.point.y < 0 ||
+          param.point.y > chartContainerRef.current!.clientHeight
+        ) {
+          // Mouse is outside the chart
+          setHoverData({
+            time: null,
+            price: null,
+            ohlc: null,
+            indicatorValues: {}
+          });
+          return;
+        }
+
+        const candle = findCandleByTime(param.time);
+        const indicatorValues = getIndicatorValuesAtTime(param.time);
+        
+        let ohlcData = null;
+        if (candle && 'open' in candle) {
+          const candleWithOHLC = candle as CandlestickData<Time>;
+          ohlcData = {
+            open: candleWithOHLC.open,
+            high: candleWithOHLC.high,
+            low: candleWithOHLC.low,
+            close: candleWithOHLC.close,
+            volume: 'volume' in candleWithOHLC ? candleWithOHLC.volume : undefined
+          };
+        } else if (candle && 'value' in candle) {
+          ohlcData = {
+            close: (candle as LineData<Time>).value
+          };
+        }
+
+        // Fix: Use the candle's close/value instead of seriesPrices which doesn't exist
+        const price = candle ? 
+          ('close' in candle ? candle.close : ('value' in candle ? candle.value : null)) 
+          : null;
+
         setHoverData({
-          time: null,
-          price: null,
-          ohlc: null,
-          indicatorValues: {}
+          time: param.time,
+          price: price,
+          ohlc: ohlcData,
+          indicatorValues
         });
-        return;
-      }
+      });
+    }
 
-      const candle = findCandleByTime(param.time);
-      const indicatorValues = getIndicatorValuesAtTime(param.time);
-      
-      let ohlcData = null;
-      if (candle && 'open' in candle) {
-        const candleWithOHLC = candle as CandlestickData<Time>;
-        ohlcData = {
-          open: candleWithOHLC.open,
-          high: candleWithOHLC.high,
-          low: candleWithOHLC.low,
-          close: candleWithOHLC.close,
-          volume: 'volume' in candleWithOHLC ? candleWithOHLC.volume : undefined
-        };
-      } else if (candle && 'value' in candle) {
-        ohlcData = {
-          close: (candle as LineData<Time>).value
-        };
-      }
+    // Handle click for drawing trendlines
+    chart.subscribeClick((param: MouseEventParams) => {
+      if (!isDrawingModeEnabled || !param.time || param.point === undefined || !seriesRef.current) return;
 
-      // Fix: Use the candle's close/value instead of seriesPrices which doesn't exist
-      const price = candle ? 
-        ('close' in candle ? candle.close : ('value' in candle ? candle.value : null)) 
-        : null;
+      const price = seriesRef.current.coordinateToPrice(param.point.y);
+      if (price === null) return;
 
-      setHoverData({
-        time: param.time,
-        price: price,
-        ohlc: ohlcData,
-        indicatorValues
+      const time = param.time;
+
+      setCurrentTrendlinePoints(prevPoints => {
+        const newPoints = [...prevPoints, { time, price }];
+        if (newPoints.length === 2) {
+          const newTrendline = {
+            id: Date.now().toString(),
+            point1: newPoints[0],
+            point2: newPoints[1],
+          };
+          setTrendlines(prevTrendlines => [...prevTrendlines, newTrendline]);
+          return []; // Clear points for next trendline
+        }
+        return newPoints;
       });
     });
     
@@ -464,12 +548,15 @@ const Chart: React.FC<ChartProps> = ({
     if (!isInitialized || !chartRef.current || !indicators || !data || data.length === 0) return;
 
     // Clear existing indicator series
-    Object.values(indicatorSeriesRef.current).forEach(series => {
-      if (series && typeof series.remove === 'function') {
-        series.remove();
+    Object.entries(indicatorSeriesRef.current).forEach(([id, series]) => {
+      if (series && chartRef.current) {
+        try {
+          chartRef.current.removeSeries(series);
+        } catch (e) {
+          console.warn(`Error removing indicator series ${id}:`, e);
+        }
       }
     });
-    
     indicatorSeriesRef.current = {};
 
     // Add indicator series
@@ -567,189 +654,164 @@ const Chart: React.FC<ChartProps> = ({
         }
       } else {
         // Add secondary indicators in separate panes with similar safety checks for all data mappings
-        if (indicatorId === 'macd') {
-          // MACD Line
+        if (indicatorId === 'macd' && indicatorData.macd && indicatorData.signal && indicatorData.histogram) {
+          // MACD Line (using HistogramSeries for MACD line itself for potential coloring)
           const macdSeries = chartRef.current.addHistogramSeries({
-            color: '#2962FF',
-            priceScaleId: 'macd',
-            priceFormat: {
-              type: 'price',
-              precision: 4,
-            },
-            title: 'MACD'
+            priceScaleId: 'macdPane', // Ensure a unique pane ID
+            priceFormat: { type: 'price', precision: indicator.precision || 4 },
+            title: 'MACD Line',
           });
-          
           macdSeries.priceScale().applyOptions({
-            scaleMargins: {
-              top: 0.7, 
-              bottom: 0.3,
-            },
+            scaleMargins: { top: 0.7, bottom: 0.3 },
           });
-          
-          const macdData = indicatorData.macd.map((value: number, index: number) => ({
+          const macdLineData = indicatorData.macd.map((value: number, index: number) => ({
             time: (data[index] as any).time,
             value: value,
-            color: value >= 0 ? '#26a69a' : '#ef5350'
-          }));
-          
-          macdSeries.setData(macdData);
-          indicatorSeriesRef.current[`${indicatorId}_line`] = macdSeries;
-          
+            color: value >= 0 ? 'rgba(38, 166, 154, 0.7)' : 'rgba(239, 83, 80, 0.7)', // Example coloring
+          })).filter(d => d.time && d.value !== undefined);
+          if (macdLineData.length > 0) macdSeries.setData(macdLineData);
+          indicatorSeriesRef.current[`${indicatorId}_macdLine`] = macdSeries;
+        
           // Signal Line
           const signalSeries = chartRef.current.addLineSeries({
-            color: '#FF6B6B',
+            color: indicator.signalColor || '#FF6B6B',
             lineWidth: 1,
-            priceScaleId: 'macd',
-            title: 'Signal'
+            priceScaleId: 'macdPane', // Same pane as MACD line
+            title: 'Signal',
           });
-          
           const signalData = indicatorData.signal.map((value: number, index: number) => ({
             time: (data[index] as any).time,
-            value: value
-          }));
-          
-          signalSeries.setData(signalData);
+            value: value,
+          })).filter(d => d.time && d.value !== undefined);
+         if (signalData.length > 0) signalSeries.setData(signalData);
           indicatorSeriesRef.current[`${indicatorId}_signal`] = signalSeries;
-          
+        
           // Histogram
           const histogramSeries = chartRef.current.addHistogramSeries({
-            priceScaleId: 'macd_histogram',
-            priceFormat: {
-              type: 'price',
-              precision: 4,
-            },
-            title: 'Histogram'
+            priceScaleId: 'macdHistPane', // Separate pane for histogram if desired, or use 'macdPane'
+            priceFormat: { type: 'price', precision: indicator.precision || 4 },
+            title: 'MACD Hist',
           });
-          
           histogramSeries.priceScale().applyOptions({
-            scaleMargins: {
-              top: 0.2, 
-              bottom: 0,
-            },
+            scaleMargins: { top: 0.2, bottom: 0 },
           });
-          
           const histogramData = indicatorData.histogram.map((value: number, index: number) => ({
             time: (data[index] as any).time,
             value: value,
-            color: value >= 0 ? 'rgba(38, 166, 154, 0.5)' : 'rgba(239, 83, 80, 0.5)'
-          }));
-          
-          histogramSeries.setData(histogramData);
+            color: value >= 0 ? 'rgba(38, 166, 154, 0.5)' : 'rgba(239, 83, 80, 0.5)',
+          })).filter(d => d.time && d.value !== undefined);
+          if (histogramData.length > 0) histogramSeries.setData(histogramData);
           indicatorSeriesRef.current[`${indicatorId}_histogram`] = histogramSeries;
-        } else if (indicatorId === 'rsi') {
+
+        } else if (indicatorId === 'rsi' && Array.isArray(indicatorData)) {
           const rsiSeries = chartRef.current.addLineSeries({
             color: indicator.color || '#6B8E23',
             lineWidth: 2,
-            priceScaleId: 'rsi',
-            title: 'RSI'
+            priceScaleId: 'rsiPane', // Unique pane ID
+            title: 'RSI',
           });
-          
-          rsiSeries.priceScale().applyOptions({
-            scaleMargins: {
-              top: 0.1, 
-              bottom: 0.1,
-            },
-          });
-          
-          const rsiData = indicatorData.map((value: number, index: number) => ({
-            time: (data[index] as any).time,
-            value: value
-          }));
-          
-          rsiSeries.setData(rsiData);
+          rsiSeries.priceScale().applyOptions({ scaleMargins: { top: 0.1, bottom: 0.1 } });
+          const rsiLineData = indicatorData.map((value: number, index: number) => ({
+            time: (data[index]as any).time,
+            value: value,
+          })).filter(d => d.time && d.value !== undefined);
+          if (rsiLineData.length > 0) rsiSeries.setData(rsiLineData);
           indicatorSeriesRef.current[indicatorId] = rsiSeries;
-          
-          // Add overbought/oversold lines
-          const overboughtSeries = chartRef.current.addLineSeries({
-            color: 'rgba(255, 107, 107, 0.5)',
-            lineWidth: 1,
-            lineStyle: LineStyle.Dashed,
-            priceScaleId: 'rsi',
-            title: 'Overbought'
-          });
-          
-          const oversoldSeries = chartRef.current.addLineSeries({
-            color: 'rgba(38, 166, 154, 0.5)',
-            lineWidth: 1,
-            lineStyle: LineStyle.Dashed,
-            priceScaleId: 'rsi',
-            title: 'Oversold'
-          });
-          
-          const overboughtData = data.map((candle: any) => ({
-            time: candle.time,
-            value: 70
-          }));
-          
-          const oversoldData = data.map((candle: any) => ({
-            time: candle.time,
-            value: 30
-          }));
-          
-          overboughtSeries.setData(overboughtData);
-          oversoldSeries.setData(oversoldData);
-          
-          indicatorSeriesRef.current[`${indicatorId}_overbought`] = overboughtSeries;
-          indicatorSeriesRef.current[`${indicatorId}_oversold`] = oversoldSeries;
-        } else if (indicatorId === 'adx') {
+        
+          // Overbought/Oversold lines for RSI
+          const overboughtLevel = 70;
+          const oversoldLevel = 30;
+          const rsiTimeData = data.map(d => d.time).filter(t => t !== undefined);
+
+          if (rsiTimeData.length > 0) {
+            const overboughtSeries = chartRef.current.addLineSeries({
+              color: 'rgba(255, 107, 107, 0.5)', lineWidth: 1, lineStyle: LineStyle.Dashed,
+              priceScaleId: 'rsiPane', title: 'Overbought',
+              lastValueVisible: false, priceLineVisible: false,
+            });
+            overboughtSeries.setData(rsiTimeData.map(time => ({ time, value: overboughtLevel })));
+            indicatorSeriesRef.current[`${indicatorId}_overbought`] = overboughtSeries;
+      
+            const oversoldSeries = chartRef.current.addLineSeries({
+              color: 'rgba(38, 166, 154, 0.5)', lineWidth: 1, lineStyle: LineStyle.Dashed,
+              priceScaleId: 'rsiPane', title: 'Oversold',
+              lastValueVisible: false, priceLineVisible: false,
+            });
+            oversoldSeries.setData(rsiTimeData.map(time => ({ time, value: oversoldLevel })));
+            indicatorSeriesRef.current[`${indicatorId}_oversold`] = oversoldSeries;
+          }
+
+        } else if (indicatorId === 'adx' && indicatorData.adx && indicatorData.plusDI && indicatorData.minusDI) {
+          const adxPaneId = 'adxPane'; // Unique pane ID
           // ADX Line
           const adxSeries = chartRef.current.addLineSeries({
-            color: indicator.color || '#B05B3B',
-            lineWidth: 2,
-            priceScaleId: 'adx',
-            title: 'ADX'
+            color: indicator.color || '#B05B3B', lineWidth: 2, priceScaleId: adxPaneId, title: 'ADX',
           });
-          
-          adxSeries.priceScale().applyOptions({
-            scaleMargins: {
-              top: 0.1, 
-              bottom: 0.3,
-            },
-          });
-          
-          const adxData = indicatorData.adx.map((value: number, index: number) => ({
-            time: (data[index] as any).time,
-            value: value
-          }));
-          
-          adxSeries.setData(adxData);
+          adxSeries.priceScale().applyOptions({ scaleMargins: { top: 0.1, bottom: 0.3 } });
+          const adxLineData = indicatorData.adx.map((value: number, index: number) => ({
+            time: (data[index] as any).time, value: value,
+          })).filter(d => d.time && d.value !== undefined);
+          if (adxLineData.length > 0) adxSeries.setData(adxLineData);
           indicatorSeriesRef.current[`${indicatorId}_adx`] = adxSeries;
-          
+        
           // +DI Line
           const plusDISeries = chartRef.current.addLineSeries({
-            color: '#26a69a',
-            lineWidth: 1,
-            priceScaleId: 'adx',
-            title: '+DI'
+            color: '#26a69a', lineWidth: 1, priceScaleId: adxPaneId, title: '+DI',
           });
-          
           const plusDIData = indicatorData.plusDI.map((value: number, index: number) => ({
-            time: (data[index] as any).time,
-            value: value
-          }));
-          
-          plusDISeries.setData(plusDIData);
+            time: (data[index] as any).time, value: value,
+          })).filter(d => d.time && d.value !== undefined);
+          if (plusDIData.length > 0) plusDISeries.setData(plusDIData);
           indicatorSeriesRef.current[`${indicatorId}_plusDI`] = plusDISeries;
-          
+        
           // -DI Line
           const minusDISeries = chartRef.current.addLineSeries({
-            color: '#ef5350',
-            lineWidth: 1,
-            priceScaleId: 'adx',
-            title: '-DI'
+            color: '#ef5350', lineWidth: 1, priceScaleId: adxPaneId, title: '-DI',
           });
-          
           const minusDIData = indicatorData.minusDI.map((value: number, index: number) => ({
-            time: (data[index] as any).time,
-            value: value
-          }));
-          
-          minusDISeries.setData(minusDIData);
+            time: (data[index] as any).time, value: value,
+          })).filter(d => d.time && d.value !== undefined);
+          if (minusDIData.length > 0) minusDISeries.setData(minusDIData);
           indicatorSeriesRef.current[`${indicatorId}_minusDI`] = minusDISeries;
         }
       }
     }
-  }, [indicators, activeIndicators, isInitialized, data]);
+  }, [indicators, activeIndicators, isInitialized, data]); // Keep data dependency for recalculating indicator lines
+
+  // Render trendlines
+  useEffect(() => {
+    if (!isInitialized || !chartRef.current) return;
+
+    // Clear existing trendline series
+    Object.entries(trendlineSeriesRef.current).forEach(([id, series]) => {
+      if (series && chartRef.current) {
+        try {
+          chartRef.current.removeSeries(series);
+        } catch (e) {
+          console.warn(`Error removing trendline series ${id}:`, e);
+        }
+      }
+    });
+    trendlineSeriesRef.current = {};
+
+    // Draw trendlines
+    trendlines.forEach(trendline => {
+      if (trendline.point1 && trendline.point2 && chartRef.current) {
+        const lineSeries = chartRef.current.addLineSeries({
+          lineWidth: 2,
+          color: 'yellow', // Or make this configurable
+          priceScaleId: '', // Main price scale
+          lastValueVisible: false, // No need for labels on trendlines
+          priceLineVisible: false,
+        });
+        lineSeries.setData([
+          { time: trendline.point1.time, value: trendline.point1.price },
+          { time: trendline.point2.time, value: trendline.point2.price },
+        ]);
+        trendlineSeriesRef.current[trendline.id] = lineSeries;
+      }
+    });
+  }, [trendlines, isInitialized]); // Redraw when trendlines change or chart re-initializes
 
   // Format timestamp for display
   const formatTime = (timestamp: Time | null): string => {
@@ -775,8 +837,16 @@ const Chart: React.FC<ChartProps> = ({
         </div>
       </div>
       
-      {/* Zoom controls */}
+      {/* Toolbar: Zoom controls and Drawing mode */}
       <div className="absolute top-2 right-2 z-10 flex gap-2">
+        <Button
+          variant={isDrawingModeEnabled ? "secondary" : "outline"}
+          size="sm"
+          className="h-8 bg-sidebar-secondary bg-opacity-80 hover:bg-sidebar-accent transition-colors"
+          onClick={toggleDrawingMode}
+        >
+          {isDrawingModeEnabled ? "Cancel Draw" : "Draw Trendline"}
+        </Button>
         <Button 
           variant="outline" 
           size="icon"
@@ -852,10 +922,12 @@ const Chart: React.FC<ChartProps> = ({
                         </div>
                       </>
                     )}
-                    {(indicatorId === 'sma' || indicatorId === 'ema') && (
+                    {(indicatorId === 'sma' || indicatorId === 'ema' || indicatorId === 'vwap') && (
                       <>
                         <div className="text-muted-foreground text-xs">Value</div>
-                        <div className="font-mono text-right text-xs">{Number(data.value).toFixed(2)}</div>
+                        <div className="font-mono text-right text-xs">
+                          {data.value !== null && data.value !== undefined ? Number(data.value).toFixed(2) : 'N/A'}
+                        </div>
                       </>
                     )}
                     {indicatorId === 'macd' && (
