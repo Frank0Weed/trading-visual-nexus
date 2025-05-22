@@ -1,3 +1,4 @@
+
 import React, { useEffect, useRef, useState } from 'react';
 import { CandlestickData, LineData, Time } from 'lightweight-charts';
 import Chart, { ChartType } from '../Chart';
@@ -178,7 +179,7 @@ const ChartContainer: React.FC<ChartContainerProps> = ({
               <span className="text-muted-foreground">C</span>
               <span className="text-foreground font-medium ml-1">{ohlcData.close.toFixed(2)}</span>
             </div>
-            {/* Add volume display */}
+            {/* Volume display */}
             {ohlcData.volume !== undefined && (
               <div className="flex items-center">
                 <Volume className="h-3.5 w-3.5 text-muted-foreground mr-0.5" />
