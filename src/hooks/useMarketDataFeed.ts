@@ -1,4 +1,3 @@
-
 import { useState, useEffect, useCallback } from 'react';
 import useWebSocket, { ReadyState } from 'react-use-websocket';
 import { getWebSocketUrl, PriceData, CandleData } from '../services/apiService';
@@ -136,6 +135,23 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
     return currentPeriod > lastCandlePeriod;
   };
 
+  // Find existing candle in the current period
+  const findExistingCandleInPeriod = (symbol: string, timeframe: string, periodStartTime: number): CandleData | null => {
+    const symbolCandles = latestCandles[symbol]?.[timeframe];
+    if (!symbolCandles) return null;
+    
+    // Ensure time comparison is done with numbers
+    const candleTime = typeof symbolCandles.time === 'string' 
+      ? parseInt(symbolCandles.time, 10) 
+      : Number(symbolCandles.time);
+      
+    if (candleTime === periodStartTime) {
+      return symbolCandles;
+    }
+    
+    return null;
+  };
+
   // Handle WebSocket messages
   useEffect(() => {
     if (lastMessage) {
@@ -161,96 +177,8 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
             [symbol]: priceData
           }));
           
-          // Check if we need to create a new candle based on the current time
-          if (currentTimeframe) {
-            const price = priceData.bid;
-            const key = `${symbol}-${currentTimeframe}`;
-            const intervalSeconds = getTimeframeIntervalSeconds(currentTimeframe);
-            const currentPeriodStart = Math.floor(currentTime / intervalSeconds) * intervalSeconds;
-            
-            // First check if we should create a new candle
-            if (shouldCreateNewCandle(symbol, currentTimeframe, currentTime)) {
-              console.log(`Creating new ${currentTimeframe} candle for ${symbol} at ${new Date(currentTime * 1000).toLocaleTimeString()}, opening at ${price}`);
-              
-              // Create a new candle
-              const newCandle = createNewCandle(symbol, currentTimeframe, price);
-              
-              // Update the latest candles with this new candle
-              setLatestCandles(prev => {
-                const symbolCandles = prev[symbol] || {};
-                return {
-                  ...prev,
-                  [symbol]: {
-                    ...symbolCandles,
-                    [currentTimeframe]: newCandle
-                  }
-                };
-              });
-              
-              // Update the last candle time for this symbol and timeframe
-              setLastCandleTimes(prev => ({
-                ...prev,
-                [key]: currentPeriodStart
-              }));
-              
-              console.log(`New candle period started: ${new Date(currentPeriodStart * 1000).toLocaleTimeString()} with price ${price}`);
-            } else {
-              // If we have an existing candle for this time period, update it with the new price
-              const existingCandle = latestCandles[symbol]?.[currentTimeframe];
-              
-              // Only update if we have an existing candle and it's for the current period
-              if (existingCandle) {
-                // Convert time values to numbers for safe comparison
-                const existingCandleTime = typeof existingCandle.time === 'string' 
-                  ? parseInt(existingCandle.time, 10) 
-                  : Number(existingCandle.time);
-                
-                // Only update if the candle is for the current period
-                if (existingCandleTime === currentPeriodStart) {
-                  const updatedCandle = {
-                    ...existingCandle,
-                    high: Math.max(existingCandle.high, price),
-                    low: Math.min(existingCandle.low, price),
-                    close: price,
-                    tick_volume: existingCandle.tick_volume + 1,
-                    volume: (existingCandle.volume || existingCandle.tick_volume) + 1
-                  };
-                  
-                  setLatestCandles(prev => {
-                    const symbolCandles = prev[symbol] || {};
-                    return {
-                      ...prev,
-                      [symbol]: {
-                        ...symbolCandles,
-                        [currentTimeframe]: updatedCandle
-                      }
-                    };
-                  });
-                } else if (Number(existingCandleTime) < currentPeriodStart) {
-                  // If we don't have a candle for this period yet, create one
-                  console.log(`No candle for current period, creating new one for ${symbol} at ${new Date(currentPeriodStart * 1000).toLocaleTimeString()}`);
-                  const newCandle = createNewCandle(symbol, currentTimeframe, price);
-                  
-                  setLatestCandles(prev => {
-                    const symbolCandles = prev[symbol] || {};
-                    return {
-                      ...prev,
-                      [symbol]: {
-                        ...symbolCandles,
-                        [currentTimeframe]: newCandle
-                      }
-                    };
-                  });
-                  
-                  // Update the last candle time
-                  setLastCandleTimes(prev => ({
-                    ...prev,
-                    [key]: currentPeriodStart
-                  }));
-                }
-              }
-            }
-          }
+          // Skip candle updates from price feed - rely on candle_update messages
+          // This prevents duplicate/conflicting candle creation
         }
         
         // Handle new candle data from the server
@@ -275,14 +203,13 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
             volume: parseInt(candle.volume || candle.tick_volume) || 0
           };
           
-          console.log(`Received server candle for ${symbol} ${timeframe} at ${new Date().toLocaleTimeString()}: open=${parsedCandle.open}, close=${parsedCandle.close}`);
+          console.log(`Received server candle for ${symbol} ${timeframe} at ${new Date().toLocaleTimeString()}: open=${parsedCandle.open}, close=${parsedCandle.close}, time=${new Date(Number(parsedCandle.time) * 1000).toLocaleTimeString()}`);
           
           // Update the last candle time for this symbol and timeframe - with explicit Number conversion
           const key = `${symbol}-${timeframe}`;
           const candleTime = Number(parsedCandle.time);
           
           setLastCandleTimes(prev => {
-            // Create a new state object with the updated key-value pair
             return {
               ...prev,
               [key]: candleTime
@@ -305,7 +232,7 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
         console.error('Error parsing WebSocket message:', error);
       }
     }
-  }, [lastMessage, currentTimeframe, latestCandles]);
+  }, [lastMessage, currentTimeframe]);
 
   // Initial subscription and heartbeat setup
   useEffect(() => {
@@ -395,30 +322,11 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
       symbols.forEach(symbol => {
         const key = `${symbol}-${currentTimeframe}`;
         newCandleTimes[key] = currentPeriodStart;
-        
-        // Create new candles for each symbol if we have price data
-        if (prices[symbol]) {
-          const price = prices[symbol].bid;
-          const newCandle = createNewCandle(symbol, currentTimeframe, price);
-          
-          setLatestCandles(prev => {
-            const symbolCandles = prev[symbol] || {};
-            return {
-              ...prev,
-              [symbol]: {
-                ...symbolCandles,
-                [currentTimeframe]: newCandle
-              }
-            };
-          });
-        }
       });
       
       setLastCandleTimes(prev => {
-        // Make sure we're returning a new state object with only number values
         const updatedState = { ...prev };
         
-        // Add all new candle times
         Object.entries(newCandleTimes).forEach(([key, value]) => {
           updatedState[key] = value;
         });

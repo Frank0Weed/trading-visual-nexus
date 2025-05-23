@@ -1,4 +1,3 @@
-
 import React, { useState, useCallback, useEffect } from 'react';
 import { ReadyState } from 'react-use-websocket';
 
@@ -49,8 +48,7 @@ const TradingPlatform: React.FC = () => {
   const { 
     candles, 
     isLoading: isLoadingChart,
-    updateLatestPrice,
-    updateLatestCandle
+    updateLatestPrice
   } = useChartData({ 
     selectedSymbol, 
     selectedTimeframe, 
@@ -74,15 +72,6 @@ const TradingPlatform: React.FC = () => {
     
     return () => clearInterval(connectionMonitor);
   }, [lastMessageTime, readyState, lastConnectionCheck]);
-
-  // Add effect to update latest candle when it changes
-  useEffect(() => {
-    if (latestCandle) {
-      console.log(`TradingPlatform received new candle for ${selectedSymbol} ${selectedTimeframe}:`, 
-        `open=${latestCandle.open}, close=${latestCandle.close}`);
-      updateLatestCandle(latestCandle);
-    }
-  }, [latestCandle, updateLatestCandle, selectedSymbol, selectedTimeframe]);
 
   // Event handlers
   const handleSymbolSelect = useCallback((symbol: string) => {
