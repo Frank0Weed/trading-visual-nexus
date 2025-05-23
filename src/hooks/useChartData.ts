@@ -45,7 +45,7 @@ const formatCandleData = (candles: CandleData[], chartType: ChartType): Candlest
       // Convert time to UTC timestamp in seconds if it's a string
       const timeValue = typeof candle.time === 'string' 
         ? new Date(candle.time).getTime() / 1000
-        : candle.time;
+        : Number(candle.time);
         
       return {
         time: timeValue as Time,
@@ -58,7 +58,7 @@ const formatCandleData = (candles: CandleData[], chartType: ChartType): Candlest
       // Convert time to UTC timestamp in seconds if it's a string
       const timeValue = typeof candle.time === 'string' 
         ? new Date(candle.time).getTime() / 1000
-        : candle.time;
+        : Number(candle.time);
         
       return {
         time: timeValue as Time,
@@ -73,14 +73,22 @@ const formatCandleData = (candles: CandleData[], chartType: ChartType): Candlest
 
 // Helper to ensure time values are unique and properly sorted in data array
 function ensureUniqueTimestamps<T extends {time: Time}>(data: T[]): T[] {
+  // Convert all time values to numbers for consistent comparison
+  const dataWithNumericTime = data.map(item => ({
+    ...item,
+    numericTime: Number(item.time)
+  }));
+  
   // Create a map to store unique entries by timestamp
   const uniqueTimeMap = new Map<number, T>();
   
   // Process each data point
-  data.forEach(item => {
-    const timeValue = Number(item.time);
+  dataWithNumericTime.forEach(item => {
     // Only keep the latest entry for each timestamp
-    uniqueTimeMap.set(timeValue, item);
+    uniqueTimeMap.set(item.numericTime, {
+      ...item,
+      time: item.numericTime as Time
+    });
   });
   
   // Convert map values to array and sort by time
@@ -115,7 +123,7 @@ export const useChartData = ({
         // Format the data to match Chart component requirements
         let formattedData = formatCandleData(data, chartType);
         
-        // Ensure the data has unique timestamps and is properly sorted
+        // Ensure the data has unique timestamps and is properly sorted based on chart type
         if (chartType === 'line' || chartType === 'area') {
           formattedData = ensureUniqueTimestamps<LineData<Time>>(formattedData as LineData<Time>[]);
         } else {
@@ -164,6 +172,7 @@ export const useChartData = ({
     console.log(`useChartData.updateLatestCandle received candle:`, 
       `time=${new Date(Number(candle.time) * 1000).toLocaleTimeString()}, open=${candle.open}, close=${candle.close}`);
     
+    // Ensure time is a number for consistent comparison
     const timeValue = typeof candle.time === 'string'
       ? parseInt(candle.time, 10)
       : Number(candle.time);
