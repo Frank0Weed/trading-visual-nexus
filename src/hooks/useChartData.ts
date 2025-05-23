@@ -321,7 +321,11 @@ export const useChartData = ({
     // Scenario 2: The price tick updates the most recent candle.
     // This happens if it's not a new period OR if a candle for this period was already processed (e.g. by updateLatestCandle or a previous price tick)
     setCandles(prevCandles => {
-      if (!prevCandles || prevCandles.length === 0) return prevCandles;
+      // Ensure prevCandles is not empty before proceeding
+      if (!prevCandles || prevCandles.length === 0) {
+        console.log(`[updateLatestPrice] prevCandles is empty or undefined, skipping update. Price: ${price}. Symbol=${selectedSymbol} timeframe=${selectedTimeframe}`);
+        return prevCandles;
+      }
 
       let lastCandle = prevCandles[prevCandles.length - 1];
       const lastCandleTime = Number(lastCandle.time);
@@ -365,7 +369,7 @@ export const useChartData = ({
       }
     });
     lastPriceUpdateTimeRef.current = now; // Record time of this update
-  }, [chartType, selectedTimeframe, candles.length, selectedSymbol]); // Added selectedSymbol for logging
+  }, [chartType, selectedTimeframe, selectedSymbol]);
   
   // Update candle when latestCandle prop changes
   useEffect(() => {

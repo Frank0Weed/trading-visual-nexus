@@ -405,6 +405,155 @@ const calculateVWAP = (candles: CandlestickData<Time> & { volume?: number }[]): 
   return vwapValues;
 };
 
+// Stochastic Oscillator
+const calculateStochastic = (
+  candles: CandlestickData<Time>[],
+  params = { period: 14, kSmoothing: 3, dSmoothing: 3 }
+): { kLine: (number | null)[]; dLine: (number | null)[] } => {
+  const { period, kSmoothing, dSmoothing } = params;
+
+  const kLineRaw: (number | null)[] = [];
+  const kLine: (number | null)[] = [];
+  const dLine: (number | null)[] = [];
+
+  if (candles.length < period) {
+    const nulls = Array(candles.length).fill(null);
+    return { kLine: nulls, dLine: nulls };
+  }
+
+  // Calculate %K_raw
+  for (let i = 0; i < candles.length; i++) {
+    if (i < period - 1) {
+      kLineRaw.push(null);
+      continue;
+    }
+
+    const currentSlice = candles.slice(i - period + 1, i + 1);
+    let lowestLow = currentSlice[0].low;
+    let highestHigh = currentSlice[0].high;
+
+    for (let j = 1; j < currentSlice.length; j++) {
+      if (currentSlice[j].low < lowestLow) lowestLow = currentSlice[j].low;
+      if (currentSlice[j].high > highestHigh) highestHigh = currentSlice[j].high;
+    }
+
+    const currentClose = candles[i].close;
+    if (highestHigh === lowestLow) { // Avoid division by zero
+      kLineRaw.push(i > 0 && kLineRaw[i-1] !== null ? kLineRaw[i-1] : 50); // Use previous or default
+    } else {
+      kLineRaw.push(((currentClose - lowestLow) / (highestHigh - lowestLow)) * 100);
+    }
+  }
+
+  // Calculate %K (SMA of %K_raw)
+  if (kSmoothing > 1) {
+    for (let i = 0; i < candles.length; i++) {
+      if (i < period - 1 + kSmoothing - 1) {
+        kLine.push(null);
+        continue;
+      }
+      let sumKRaw = 0;
+      let countKRaw = 0;
+      for (let j = 0; j < kSmoothing; j++) {
+        if (kLineRaw[i - j] !== null) {
+          sumKRaw += kLineRaw[i - j]!;
+          countKRaw++;
+        }
+      }
+      kLine.push(countKRaw > 0 ? sumKRaw / countKRaw : null);
+    }
+  } else {
+    kLine.push(...kLineRaw); // No smoothing, %K is %K_raw
+  }
+
+  // Calculate %D (SMA of %K)
+  if (dSmoothing > 1) {
+    for (let i = 0; i < candles.length; i++) {
+      // Initial nulls: (period-1 for Kraw) + (kSmoothing-1 for K) + (dSmoothing-1 for D)
+      if (i < period - 1 + (kSmoothing > 1 ? kSmoothing - 1 : 0) + dSmoothing - 1) {
+        dLine.push(null);
+        continue;
+      }
+      let sumK = 0;
+      let countK = 0;
+      for (let j = 0; j < dSmoothing; j++) {
+        if (kLine[i - j] !== null) {
+          sumK += kLine[i - j]!;
+          countK++;
+        }
+      }
+      dLine.push(countK > 0 ? sumK / countK : null);
+    }
+  } else {
+    dLine.push(...kLine); // No smoothing for D, %D is %K
+  }
+  
+  return { kLine, dLine };
+};
+
+// Average True Range (ATR)
+const calculateATR = (
+  candles: CandlestickData<Time>[],
+  params = { period: 14 }
+): (number | null)[] => {
+  const { period } = params;
+  const atrValues: (number | null)[] = [];
+
+  if (candles.length === 0) {
+    return [];
+  }
+
+  const trueRanges: number[] = [];
+
+  // Calculate True Ranges
+  for (let i = 0; i < candles.length; i++) {
+    const currentHigh = candles[i].high;
+    const currentLow = candles[i].low;
+    let tr = 0;
+
+    if (i === 0) {
+      tr = currentHigh - currentLow;
+    } else {
+      const previousClose = candles[i - 1].close;
+      tr = Math.max(
+        currentHigh - currentLow,
+        Math.abs(currentHigh - previousClose),
+        Math.abs(currentLow - previousClose)
+      );
+    }
+    trueRanges.push(tr);
+  }
+
+  // Calculate ATR
+  for (let i = 0; i < candles.length; i++) {
+    if (i < period -1) { //ATR starts from the 'period'-th candle. So, (period-1) index.
+      atrValues.push(null); // Not enough data for ATR yet
+      continue;
+    }
+    
+    if (i === period - 1) {
+      // First ATR is the average of the first 'period' TRs
+      let sumTR = 0;
+      for (let j = 0; j < period; j++) {
+        sumTR += trueRanges[j];
+      }
+      atrValues.push(sumTR / period);
+    } else {
+      // Subsequent ATRs are smoothed
+      const previousATR = atrValues[i - 1];
+      if (previousATR === null) { // Should not happen if logic is correct
+          atrValues.push(null); 
+          continue;
+      }
+      const currentTR = trueRanges[i];
+      const currentATR = (previousATR * (period - 1) + currentTR) / period;
+      atrValues.push(currentATR);
+    }
+  }
+
+  return atrValues;
+};
+
 
 // Define the indicators object with improved colors
 const indicators: Record<string, Indicator> = {
@@ -576,7 +725,58 @@ const indicators: Record<string, Indicator> = {
         bottom: 0.1
       }
     }
-  }
+  },
+  stochastic: {
+    id: 'stochastic',
+    name: 'Stochastic Oscillator',
+    description: 'Momentum indicator comparing closing price to a range of prices.',
+    category: 'momentum',
+    defaultParams: { period: 14, kSmoothing: 3, dSmoothing: 3 },
+    calculate: calculateStochastic,
+    format: (value: any) => {
+      if (value && value.kLine !== undefined && value.dLine !== undefined) {
+        const kVal = value.kLine !== null ? value.kLine.toFixed(2) : 'N/A';
+        const dVal = value.dLine !== null ? value.dLine.toFixed(2) : 'N/A';
+        return `K:${kVal} D:${dVal}`;
+      }
+      return 'N/A';
+    },
+    color: '#EAB308', // Yellow/Gold
+    display: 'separate-window',
+    plotConfig: { // Plotting two lines: %K and %D
+      type: 'line', // Primary type, specific lines handled in Chart.tsx
+      // lineWidth: 1.5, // Default for lines
+      // color: '#EAB308', // Base color, can be overridden per line
+      overlay: false,
+      priceScaleId: 'stochastic', // Unique ID for this indicator's pane
+      scaleMargins: {
+        top: 0.1, // Adjust as needed (0-100 range)
+        bottom: 0.1
+      }
+    }
+  },
+  atr: {
+    id: 'atr',
+    name: 'Average True Range (ATR)',
+    description: 'Measures market volatility.',
+    category: 'volatility',
+    defaultParams: { period: 14 },
+    calculate: calculateATR,
+    format: (value: number) => (value !== null ? value.toFixed(4) : 'N/A'),
+    color: '#10B981', // Teal/Green
+    display: 'separate-window',
+    plotConfig: {
+      type: 'line',
+      lineWidth: 1.5,
+      color: '#10B981',
+      overlay: false,
+      priceScaleId: 'atr', // Unique ID for this indicator's pane
+      scaleMargins: {
+        top: 0.2, // Adjust as needed for typical ATR range
+        bottom: 0,
+      },
+    },
+  },
 };
 
 export default indicators;
