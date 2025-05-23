@@ -157,6 +157,25 @@ const ChartContainer: React.FC<ChartContainerProps> = ({
     };
   }, [latestPrice, updateLatestPrice, ohlcData]);
 
+  // Determine chart height based on active indicators
+  const getChartHeight = () => {
+    // Base height for the chart
+    const baseHeight = 500;
+    
+    // If no indicators requiring separate windows, return base height
+    if (!activeIndicators.some(id => ['rsi', 'macd', 'adx'].includes(id))) {
+      return baseHeight;
+    }
+    
+    // Add extra height for each indicator that requires a separate pane
+    let extraHeight = 0;
+    if (activeIndicators.includes('rsi')) extraHeight += 150;
+    if (activeIndicators.includes('macd')) extraHeight += 150;
+    if (activeIndicators.includes('adx')) extraHeight += 150;
+    
+    return baseHeight + extraHeight;
+  };
+
   return (
     <div className="flex-1 p-0 relative rounded-lg border border-border bg-trading-bg-dark overflow-hidden">
       {/* Improved OHLC data bar at the top of chart */}
@@ -210,7 +229,7 @@ const ChartContainer: React.FC<ChartContainerProps> = ({
           symbol={symbol}
           timeframe={timeframe}
           chartType={chartType}
-          height={500}
+          height={getChartHeight()} // Dynamic height based on active indicators
           className="w-full"
           activeIndicators={activeIndicators}
         />

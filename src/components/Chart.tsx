@@ -1,4 +1,3 @@
-
 import React, { useRef, useEffect, useState } from 'react';
 import { 
   createChart, 
@@ -189,6 +188,36 @@ const Chart: React.FC<ChartProps> = ({
     return result;
   };
 
+  // Calculate separate pane heights based on active indicators
+  const calculatePaneHeights = () => {
+    const totalHeight = height;
+    const mainPaneHeight = totalHeight * 0.7; // Main pane takes 70% by default
+    
+    // Count separate indicators (those that need their own pane)
+    const separateIndicators = activeIndicators.filter(id => {
+      const indicator = availableIndicators[id];
+      return indicator && (indicator.display === 'separate' || indicator.display === 'separate-window');
+    });
+    
+    const separateCount = separateIndicators.length;
+    
+    if (separateCount === 0) {
+      return { mainPane: '100%', perIndicator: '0%' };
+    }
+    
+    // Calculate height percentages
+    const indicatorsPortion = 0.3; // Indicators take 30% of the total height
+    const mainPortion = 1 - indicatorsPortion;
+    
+    // Calculate per indicator height
+    const perIndicatorPortion = indicatorsPortion / separateCount;
+    
+    return {
+      mainPane: `${mainPortion * 100}%`,
+      perIndicator: `${perIndicatorPortion * 100}%`
+    };
+  };
+
   // Calculate indicators
   useEffect(() => {
     if (!data || data.length === 0) return;
@@ -334,6 +363,17 @@ const Chart: React.FC<ChartProps> = ({
       series.setData(data as LineData<Time>[]);
     }
 
+    // Configure main price scale to give room for indicators
+    const paneHeights = calculatePaneHeights();
+    if (activeIndicators.some(id => ['rsi', 'macd', 'adx'].includes(id))) {
+      series.priceScale().applyOptions({
+        scaleMargins: {
+          top: 0.1,
+          bottom: 0.2, // Leave more room at bottom for separate indicators
+        },
+      });
+    }
+
     // Add volume histogram
     const volumeSeries = chart.addHistogramSeries({
       color: '#26a69a',
@@ -349,6 +389,8 @@ const Chart: React.FC<ChartProps> = ({
         top: 0.8, // Volume appears at the bottom 20% of the chart
         bottom: 0,
       },
+      visible: true,
+      autoScale: true,
     });
     
     // Only set volume data if we have data
@@ -442,7 +484,7 @@ const Chart: React.FC<ChartProps> = ({
         chartRef.current = null;
       }
     };
-  }, [chartType, height, data]);
+  }, [chartType, height, data, activeIndicators]);
 
   // Update data when it changes
   useEffect(() => {
@@ -525,7 +567,7 @@ const Chart: React.FC<ChartProps> = ({
           upperSeries.setData(upperData);
           indicatorSeriesRef.current[`${indicatorId}_upper`] = upperSeries;
           
-          // Add middle band with similar safety checks
+          // Add middle and lower bands with similar safety checks
           const middleSeries = chartRef.current.addLineSeries({
             color: indicator.color || '#7E57C2',
             lineWidth: 1,
@@ -545,7 +587,6 @@ const Chart: React.FC<ChartProps> = ({
           middleSeries.setData(middleData);
           indicatorSeriesRef.current[`${indicatorId}_middle`] = middleSeries;
           
-          // Add lower band with similar safety checks
           const lowerSeries = chartRef.current.addLineSeries({
             color: indicator.color || '#7E57C2',
             lineWidth: 1,
@@ -566,15 +607,17 @@ const Chart: React.FC<ChartProps> = ({
           lowerSeries.setData(lowerData);
           indicatorSeriesRef.current[`${indicatorId}_lower`] = lowerSeries;
         }
-      } else {
-        // Add indicators in separate panes with proper scale settings
+      } else if (indicator.display === 'separate' || indicator.display === 'separate-window') {
+        // Enhanced handling for separate window indicators
         if (indicatorId === 'rsi') {
           // RSI Line in separate window
           const rsiSeries = chartRef.current.addLineSeries({
             color: indicator.color || '#9b87f5',
             lineWidth: 2,
             priceScaleId: 'rsi',
-            title: 'RSI'
+            title: 'RSI',
+            lastValueVisible: true,
+            priceLineVisible: false,
           });
           
           // Set correct scale margins for RSI (0-100 scale)
@@ -608,7 +651,8 @@ const Chart: React.FC<ChartProps> = ({
             lineWidth: 1,
             lineStyle: LineStyle.Dashed,
             priceScaleId: 'rsi',
-            title: 'Overbought'
+            title: 'Overbought',
+            lastValueVisible: false,
           });
           
           const oversoldSeries = chartRef.current.addLineSeries({
@@ -616,7 +660,8 @@ const Chart: React.FC<ChartProps> = ({
             lineWidth: 1,
             lineStyle: LineStyle.Dashed,
             priceScaleId: 'rsi',
-            title: 'Oversold'
+            title: 'Oversold',
+            lastValueVisible: false,
           });
           
           // Create data points for overbought/oversold lines
@@ -642,17 +687,19 @@ const Chart: React.FC<ChartProps> = ({
             color: '#0EA5E9',
             lineWidth: 2,
             priceScaleId: 'macd',
-            title: 'MACD'
+            title: 'MACD',
+            lastValueVisible: true,
           });
           
           // Configure scale for MACD pane
           macdSeries.priceScale().applyOptions({
             scaleMargins: {
               top: 0.2,
-              bottom: 0.5,
+              bottom: 0.4,
             },
             autoScale: true,
             visible: true,
+            entireTextOnly: true,
           });
           
           // Create data points for MACD line
@@ -674,7 +721,8 @@ const Chart: React.FC<ChartProps> = ({
             color: '#FF6B6B',
             lineWidth: 1,
             priceScaleId: 'macd',
-            title: 'Signal'
+            title: 'Signal',
+            lastValueVisible: true,
           });
           
           // Create data points for Signal line
@@ -717,12 +765,13 @@ const Chart: React.FC<ChartProps> = ({
           histogramSeries.setData(histogramData);
           indicatorSeriesRef.current[`${indicatorId}_histogram`] = histogramSeries;
         } else if (indicatorId === 'adx') {
-          // ADX Line
+          // ADX Line with improved separate pane configuration
           const adxSeries = chartRef.current.addLineSeries({
             color: indicator.color || '#B05B3B',
             lineWidth: 2,
             priceScaleId: 'adx',
-            title: 'ADX'
+            title: 'ADX',
+            lastValueVisible: true,
           });
           
           adxSeries.priceScale().applyOptions({
@@ -730,6 +779,9 @@ const Chart: React.FC<ChartProps> = ({
               top: 0.1, 
               bottom: 0.3,
             },
+            autoScale: true,
+            visible: true,
+            entireTextOnly: true,
           });
           
           const adxData = indicatorData.adx.map((value: number, index: number) => ({
@@ -740,12 +792,12 @@ const Chart: React.FC<ChartProps> = ({
           adxSeries.setData(adxData);
           indicatorSeriesRef.current[`${indicatorId}_adx`] = adxSeries;
           
-          // +DI Line
+          // +DI and -DI Lines with similar configurations
           const plusDISeries = chartRef.current.addLineSeries({
             color: '#26a69a',
             lineWidth: 1,
             priceScaleId: 'adx',
-            title: '+DI'
+            title: '+DI',
           });
           
           const plusDIData = indicatorData.plusDI.map((value: number, index: number) => ({
@@ -756,12 +808,11 @@ const Chart: React.FC<ChartProps> = ({
           plusDISeries.setData(plusDIData);
           indicatorSeriesRef.current[`${indicatorId}_plusDI`] = plusDISeries;
           
-          // -DI Line
           const minusDISeries = chartRef.current.addLineSeries({
             color: '#ef5350',
             lineWidth: 1,
             priceScaleId: 'adx',
-            title: '-DI'
+            title: '-DI',
           });
           
           const minusDIData = indicatorData.minusDI.map((value: number, index: number) => ({
@@ -858,7 +909,7 @@ const Chart: React.FC<ChartProps> = ({
             )}
           </div>
           
-          {/* Indicator values */}
+          {/* Indicator values with improved display */}
           {Object.keys(hoverData.indicatorValues).length > 0 && (
             <div className="border-t border-border pt-2">
               <div className="font-medium mb-2 text-xs text-primary">Indicators</div>
