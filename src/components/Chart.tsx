@@ -1,3 +1,4 @@
+
 import React, { useRef, useEffect, useState } from 'react';
 import { 
   createChart, 
@@ -566,95 +567,37 @@ const Chart: React.FC<ChartProps> = ({
           indicatorSeriesRef.current[`${indicatorId}_lower`] = lowerSeries;
         }
       } else {
-        // Add secondary indicators in separate panes with similar safety checks for all data mappings
-        if (indicatorId === 'macd') {
-          // MACD Line
-          const macdSeries = chartRef.current.addHistogramSeries({
-            color: '#2962FF',
-            priceScaleId: 'macd',
-            priceFormat: {
-              type: 'price',
-              precision: 4,
-            },
-            title: 'MACD'
-          });
-          
-          macdSeries.priceScale().applyOptions({
-            scaleMargins: {
-              top: 0.7, 
-              bottom: 0.3,
-            },
-          });
-          
-          const macdData = indicatorData.macd.map((value: number, index: number) => ({
-            time: (data[index] as any).time,
-            value: value,
-            color: value >= 0 ? '#26a69a' : '#ef5350'
-          }));
-          
-          macdSeries.setData(macdData);
-          indicatorSeriesRef.current[`${indicatorId}_line`] = macdSeries;
-          
-          // Signal Line
-          const signalSeries = chartRef.current.addLineSeries({
-            color: '#FF6B6B',
-            lineWidth: 1,
-            priceScaleId: 'macd',
-            title: 'Signal'
-          });
-          
-          const signalData = indicatorData.signal.map((value: number, index: number) => ({
-            time: (data[index] as any).time,
-            value: value
-          }));
-          
-          signalSeries.setData(signalData);
-          indicatorSeriesRef.current[`${indicatorId}_signal`] = signalSeries;
-          
-          // Histogram
-          const histogramSeries = chartRef.current.addHistogramSeries({
-            priceScaleId: 'macd_histogram',
-            priceFormat: {
-              type: 'price',
-              precision: 4,
-            },
-            title: 'Histogram'
-          });
-          
-          histogramSeries.priceScale().applyOptions({
-            scaleMargins: {
-              top: 0.2, 
-              bottom: 0,
-            },
-          });
-          
-          const histogramData = indicatorData.histogram.map((value: number, index: number) => ({
-            time: (data[index] as any).time,
-            value: value,
-            color: value >= 0 ? 'rgba(38, 166, 154, 0.5)' : 'rgba(239, 83, 80, 0.5)'
-          }));
-          
-          histogramSeries.setData(histogramData);
-          indicatorSeriesRef.current[`${indicatorId}_histogram`] = histogramSeries;
-        } else if (indicatorId === 'rsi') {
+        // Add indicators in separate panes with proper scale settings
+        if (indicatorId === 'rsi') {
+          // RSI Line in separate window
           const rsiSeries = chartRef.current.addLineSeries({
-            color: indicator.color || '#6B8E23',
+            color: indicator.color || '#9b87f5',
             lineWidth: 2,
             priceScaleId: 'rsi',
             title: 'RSI'
           });
           
+          // Set correct scale margins for RSI (0-100 scale)
           rsiSeries.priceScale().applyOptions({
             scaleMargins: {
               top: 0.1, 
               bottom: 0.1,
             },
+            autoScale: true,
+            visible: true,
+            entireTextOnly: true,
           });
           
-          const rsiData = indicatorData.map((value: number, index: number) => ({
-            time: (data[index] as any).time,
-            value: value
-          }));
+          // Create data points for RSI
+          const rsiData = [];
+          for (let i = 0; i < data.length && i < indicatorData.length; i++) {
+            if (data[i]) {
+              rsiData.push({
+                time: (data[i] as any).time,
+                value: indicatorData[i]
+              });
+            }
+          }
           
           rsiSeries.setData(rsiData);
           indicatorSeriesRef.current[indicatorId] = rsiSeries;
@@ -676,6 +619,7 @@ const Chart: React.FC<ChartProps> = ({
             title: 'Oversold'
           });
           
+          // Create data points for overbought/oversold lines
           const overboughtData = data.map((candle: any) => ({
             time: candle.time,
             value: 70
@@ -691,6 +635,87 @@ const Chart: React.FC<ChartProps> = ({
           
           indicatorSeriesRef.current[`${indicatorId}_overbought`] = overboughtSeries;
           indicatorSeriesRef.current[`${indicatorId}_oversold`] = oversoldSeries;
+        } else if (indicatorId === 'macd') {
+          // Create a separate pane for MACD
+          // MACD Line
+          const macdSeries = chartRef.current.addLineSeries({
+            color: '#0EA5E9',
+            lineWidth: 2,
+            priceScaleId: 'macd',
+            title: 'MACD'
+          });
+          
+          // Configure scale for MACD pane
+          macdSeries.priceScale().applyOptions({
+            scaleMargins: {
+              top: 0.2,
+              bottom: 0.5,
+            },
+            autoScale: true,
+            visible: true,
+          });
+          
+          // Create data points for MACD line
+          const macdData = [];
+          for (let i = 0; i < data.length && i < indicatorData.macd.length; i++) {
+            if (data[i]) {
+              macdData.push({
+                time: (data[i] as any).time,
+                value: indicatorData.macd[i]
+              });
+            }
+          }
+          
+          macdSeries.setData(macdData);
+          indicatorSeriesRef.current[`${indicatorId}_line`] = macdSeries;
+          
+          // Signal Line
+          const signalSeries = chartRef.current.addLineSeries({
+            color: '#FF6B6B',
+            lineWidth: 1,
+            priceScaleId: 'macd',
+            title: 'Signal'
+          });
+          
+          // Create data points for Signal line
+          const signalData = [];
+          for (let i = 0; i < data.length && i < indicatorData.signal.length; i++) {
+            if (data[i]) {
+              signalData.push({
+                time: (data[i] as any).time,
+                value: indicatorData.signal[i]
+              });
+            }
+          }
+          
+          signalSeries.setData(signalData);
+          indicatorSeriesRef.current[`${indicatorId}_signal`] = signalSeries;
+          
+          // Histogram
+          const histogramSeries = chartRef.current.addHistogramSeries({
+            color: '#D946EF',
+            priceScaleId: 'macd',
+            priceFormat: {
+              type: 'price',
+              precision: 4,
+            },
+            title: 'Histogram'
+          });
+          
+          // Create data points for histogram
+          const histogramData = [];
+          for (let i = 0; i < data.length && i < indicatorData.histogram.length; i++) {
+            if (data[i]) {
+              histogramData.push({
+                time: (data[i] as any).time,
+                value: indicatorData.histogram[i],
+                color: indicatorData.histogram[i] >= 0 ? 'rgba(38, 166, 154, 0.5)' : 'rgba(239, 83, 80, 0.5)'
+              });
+            }
+          }
+          
+          histogramSeries.setData(histogramData);
+          indicatorSeriesRef.current[`${indicatorId}_histogram`] = histogramSeries;
         } else if (indicatorId === 'adx') {
           // ADX Line
           const adxSeries = chartRef.current.addLineSeries({
