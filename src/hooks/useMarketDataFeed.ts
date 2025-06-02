@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback } from 'react';
+
+import { useState, useEffect, useCallback, useRef } from 'react';
 import useWebSocket, { ReadyState } from 'react-use-websocket';
 import { getWebSocketUrl, PriceData, CandleData } from '../services/apiService';
 import { toast } from '@/components/ui/sonner';
@@ -20,24 +21,30 @@ interface MarketDataFeedResult {
 export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFeedProps): MarketDataFeedResult => {
   const [prices, setPrices] = useState<Record<string, PriceData>>({});
   const [latestCandles, setLatestCandles] = useState<Record<string, Record<string, CandleData>>>({});
-  const [lastCandleTimes, setLastCandleTimes] = useState<Record<string, number>>({});
   const [lastMessageTime, setLastMessageTime] = useState<number>(Date.now());
+  
+  // Use refs to prevent infinite loops
+  const subscribedSymbolsRef = useRef<string>('');
+  const subscribedTimeframeRef = useRef<string>('');
+  const isInitializedRef = useRef<boolean>(false);
   
   const { sendMessage, lastMessage, readyState } = useWebSocket(getWebSocketUrl(), {
     shouldReconnect: () => true,
     reconnectAttempts: 10,
     reconnectInterval: 3000,
     onOpen: () => {
-      console.log('WebSocket connection established at:', new Date().toISOString());
+      console.log('WebSocket connection established');
       toast.success('Market data connection established');
+      isInitializedRef.current = false; // Reset on reconnection
     },
     onError: () => {
-      console.error('WebSocket connection error at:', new Date().toISOString());
+      console.error('WebSocket connection error');
       toast.error('Market data connection error');
     },
     onClose: () => {
-      console.warn('WebSocket connection closed at:', new Date().toISOString());
+      console.warn('WebSocket connection closed');
       toast.warning('Market data connection closed, attempting to reconnect...');
+      isInitializedRef.current = false;
     }
   });
 
@@ -50,291 +57,150 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
     [ReadyState.UNINSTANTIATED]: 'Uninstantiated',
   }[readyState];
 
-  // Helper function to get interval in seconds based on timeframe
-  const getTimeframeIntervalSeconds = (timeframe: string): number => {
-    switch(timeframe) {
-      case 'M1': return 60;
-      case 'M5': return 300;
-      case 'M15': return 900;
-      case 'M30': return 1800;
-      case 'H1': return 3600;
-      case 'H4': return 14400;
-      case 'D1': return 86400;
-      case 'W1': return 604800;
-      default: return 60; // Default to M1
-    }
-  };
-
-  // Create a new empty candle based on current time and timeframe
-  const createNewCandle = (symbol: string, timeframe: string, price: number): CandleData => {
-    const currentTime = Math.floor(Date.now() / 1000);
-    const intervalSeconds = getTimeframeIntervalSeconds(timeframe);
-    
-    // Calculate the start time of the current candle period
-    // This ensures the candle start time is properly aligned to the timeframe intervals
-    const candleStartTime = Math.floor(currentTime / intervalSeconds) * intervalSeconds;
-    
-    console.log(`Creating new ${timeframe} candle for ${symbol} at time: ${new Date(candleStartTime * 1000).toLocaleTimeString()}, opening price: ${price}`);
-    
-    return {
-      time: candleStartTime,
-      open: price,
-      high: price,
-      low: price,
-      close: price,
-      tick_volume: 1,
-      spread: 0,
-      real_volume: 1,
-      volume: 1 
-    };
-  };
-
-  // Subscribe to symbol updates via WebSocket
+  // Subscribe to symbol updates via WebSocket - memoized to prevent loops
   const subscribeToSymbols = useCallback(() => {
-    if (readyState === ReadyState.OPEN && symbols.length > 0) {
-      console.log('Subscribing to symbols:', symbols, 'at:', new Date().toISOString());
-      // Subscribe to all symbols
-      sendMessage(JSON.stringify({
-        type: 'subscribe',
-        symbols: symbols
-      }));
-      
-      // If we have a current timeframe, subscribe to candle updates too
-      if (currentTimeframe) {
-        console.log(`Subscribing to candles for timeframe: ${currentTimeframe}`, 'at:', new Date().toISOString());
-        sendMessage(JSON.stringify({
-          type: 'subscribe_candles',
-          symbols: symbols,
-          timeframe: currentTimeframe
-        }));
-      }
-    }
-  }, [readyState, sendMessage, symbols, currentTimeframe]);
-
-  // Check if a new candle should be created based on current time and previous candle time
-  const shouldCreateNewCandle = (symbol: string, timeframe: string, currentTime: number): boolean => {
-    if (!timeframe) return false;
+    if (readyState !== ReadyState.OPEN || symbols.length === 0) return;
     
-    const key = `${symbol}-${timeframe}`;
-    const lastCandleTime = lastCandleTimes[key] || 0;
-    const intervalSeconds = getTimeframeIntervalSeconds(timeframe);
+    const symbolsKey = symbols.sort().join(',');
+    const needsSubscription = symbolsKey !== subscribedSymbolsRef.current || 
+                             currentTimeframe !== subscribedTimeframeRef.current ||
+                             !isInitializedRef.current;
     
-    // Calculate the current period based on current time
-    const currentPeriod = Math.floor(currentTime / intervalSeconds);
+    if (!needsSubscription) return;
     
-    // Calculate the period of the last candle
-    const lastCandlePeriod = Math.floor(lastCandleTime / intervalSeconds);
+    console.log('Subscribing to symbols:', symbols);
     
-    // Debug logging for candle periods
-    if (lastCandlePeriod < currentPeriod) {
-      console.log(`Time for new candle: Last period ${lastCandlePeriod}, Current period ${currentPeriod} for ${symbol} ${timeframe}`);
-      console.log(`Last candle time: ${new Date(lastCandleTime * 1000).toLocaleTimeString()}, Current time: ${new Date(currentTime * 1000).toLocaleTimeString()}`);
-    }
+    // Subscribe to price updates
+    sendMessage(JSON.stringify({
+      type: 'subscribe',
+      symbols: symbols
+    }));
     
-    // Create new candle if we've moved to a new period
-    return currentPeriod > lastCandlePeriod;
-  };
-
-  // Find existing candle in the current period
-  const findExistingCandleInPeriod = (symbol: string, timeframe: string, periodStartTime: number): CandleData | null => {
-    const symbolCandles = latestCandles[symbol]?.[timeframe];
-    if (!symbolCandles) return null;
-    
-    // Ensure time comparison is done with numbers
-    const candleTime = typeof symbolCandles.time === 'string' 
-      ? parseInt(symbolCandles.time, 10) 
-      : Number(symbolCandles.time);
-      
-    if (candleTime === periodStartTime) {
-      return symbolCandles;
-    }
-    
-    return null;
-  };
-
-  // Handle WebSocket messages
-  useEffect(() => {
-    if (lastMessage) {
-      try {
-        const data = JSON.parse(lastMessage.data);
-        const currentTime = Math.floor(Date.now() / 1000);
-        
-        // Update last message time
-        setLastMessageTime(Date.now());
-        
-        // Handle price updates
-        if (data.type === 'price_update') {
-          const symbol = data.symbol;
-          const priceData = data.data;
-          
-          if (!symbol || !priceData) {
-            console.warn('Received incomplete price update:', data);
-            return;
-          }
-          
-          setPrices(prev => ({
-            ...prev,
-            [symbol]: priceData
-          }));
-          
-          // Skip candle updates from price feed - rely on candle_update messages
-          // This prevents duplicate/conflicting candle creation
-        }
-        
-        // Handle new candle data from the server
-        if (data.type === 'candle_update') {
-          const { symbol, timeframe, candle } = data;
-          
-          if (!candle || typeof candle !== 'object') {
-            console.error('Received invalid candle data:', candle);
-            return;
-          }
-          
-          // Create a properly structured candle object with explicit number conversions
-          const parsedCandle: CandleData = {
-            time: typeof candle.time === 'string' ? parseInt(candle.time, 10) : Number(candle.time),
-            open: parseFloat(candle.open) || 0,
-            high: parseFloat(candle.high) || 0,
-            low: parseFloat(candle.low) || 0,
-            close: parseFloat(candle.close) || 0,
-            tick_volume: parseInt(candle.tick_volume) || 0,
-            spread: parseFloat(candle.spread) || 0,
-            real_volume: parseInt(candle.real_volume) || 0,
-            volume: parseInt(candle.volume || candle.tick_volume) || 0
-          };
-          
-          console.log(`Received server candle for ${symbol} ${timeframe} at ${new Date().toLocaleTimeString()}: open=${parsedCandle.open}, close=${parsedCandle.close}, time=${new Date(Number(parsedCandle.time) * 1000).toLocaleTimeString()}`);
-          
-          // Update the last candle time for this symbol and timeframe - with explicit Number conversion
-          const key = `${symbol}-${timeframe}`;
-          const candleTime = Number(parsedCandle.time);
-          
-          setLastCandleTimes(prev => {
-            return {
-              ...prev,
-              [key]: candleTime
-            };
-          });
-          
-          // Update the candle in our state
-          setLatestCandles(prev => {
-            const symbolCandles = prev[symbol] || {};
-            return {
-              ...prev,
-              [symbol]: {
-                ...symbolCandles,
-                [timeframe]: parsedCandle
-              }
-            };
-          });
-        }
-      } catch (error) {
-        console.error('Error parsing WebSocket message:', error);
-      }
-    }
-  }, [lastMessage, currentTimeframe]);
-
-  // Initial subscription and heartbeat setup
-  useEffect(() => {
-    subscribeToSymbols();
-    
-    // Set up heartbeat to check connection
-    const heartbeatInterval = setInterval(() => {
-      if (readyState === ReadyState.OPEN) {
-        sendMessage(JSON.stringify({ type: 'ping', timestamp: Date.now() }));
-        
-        // Check if we haven't received a message in over 30 seconds
-        const now = Date.now();
-        if (now - lastMessageTime > 30000) {
-          console.warn('No messages received in 30 seconds, attempting to reconnect...');
-          toast.warning('Connection seems slow, attempting to reconnect...');
-          // Attempt to resubscribe
-          subscribeToSymbols();
-        }
-      }
-    }, 15000); // Check every 15 seconds
-    
-    return () => clearInterval(heartbeatInterval);
-  }, [subscribeToSymbols, readyState, sendMessage, lastMessageTime]);
-
-  // Initialize lastCandleTimes for each symbol when first mounted
-  useEffect(() => {
-    if (readyState === ReadyState.OPEN && symbols.length > 0 && currentTimeframe) {
-      const now = Math.floor(Date.now() / 1000);
-      const intervalSeconds = getTimeframeIntervalSeconds(currentTimeframe);
-      const currentPeriodStart = Math.floor(now / intervalSeconds) * intervalSeconds;
-      
-      console.log(`Initializing candle times for ${symbols.length} symbols with currentPeriodStart: ${new Date(currentPeriodStart * 1000).toLocaleTimeString()}`);
-      
-      // Initialize last candle times for all symbols
-      const initialCandleTimes: Record<string, number> = {};
-      symbols.forEach(symbol => {
-        const key = `${symbol}-${currentTimeframe}`;
-        initialCandleTimes[key] = currentPeriodStart;
-        
-        // Also create initial candles for each symbol
-        if (prices[symbol]) {
-          const price = prices[symbol].bid;
-          const newCandle = createNewCandle(symbol, currentTimeframe, price);
-          
-          setLatestCandles(prev => {
-            const symbolCandles = prev[symbol] || {};
-            return {
-              ...prev,
-              [symbol]: {
-                ...symbolCandles,
-                [currentTimeframe]: newCandle
-              }
-            };
-          });
-        }
-      });
-      
-      setLastCandleTimes(initialCandleTimes);
-    }
-  }, [readyState, symbols, currentTimeframe, prices]);
-
-  // Resubscribe when timeframe changes
-  useEffect(() => {
-    if (currentTimeframe && readyState === ReadyState.OPEN) {
-      console.log(`Timeframe changed to ${currentTimeframe}, resubscribing at ${new Date().toLocaleTimeString()}...`);
-      
-      // Unsubscribe from old candle feeds first
-      sendMessage(JSON.stringify({
-        type: 'unsubscribe_candles',
-        symbols: symbols
-      }));
-      
-      // Subscribe to new timeframe
+    // Subscribe to candle updates if timeframe is available
+    if (currentTimeframe) {
+      console.log(`Subscribing to candles for timeframe: ${currentTimeframe}`);
       sendMessage(JSON.stringify({
         type: 'subscribe_candles',
         symbols: symbols,
         timeframe: currentTimeframe
       }));
-      
-      // Reset last candle times for the new timeframe and create new candles
-      const now = Math.floor(Date.now() / 1000);
-      const intervalSeconds = getTimeframeIntervalSeconds(currentTimeframe);
-      const currentPeriodStart = Math.floor(now / intervalSeconds) * intervalSeconds;
-      
-      const newCandleTimes: Record<string, number> = {};
-      
-      symbols.forEach(symbol => {
-        const key = `${symbol}-${currentTimeframe}`;
-        newCandleTimes[key] = currentPeriodStart;
-      });
-      
-      setLastCandleTimes(prev => {
-        const updatedState = { ...prev };
-        
-        Object.entries(newCandleTimes).forEach(([key, value]) => {
-          updatedState[key] = value;
-        });
-        
-        return updatedState;
-      });
     }
-  }, [currentTimeframe, symbols, sendMessage, readyState, prices]);
+    
+    // Update refs to track current subscription
+    subscribedSymbolsRef.current = symbolsKey;
+    subscribedTimeframeRef.current = currentTimeframe || '';
+    isInitializedRef.current = true;
+  }, [readyState, symbols, currentTimeframe, sendMessage]);
+
+  // Handle WebSocket messages
+  useEffect(() => {
+    if (!lastMessage) return;
+    
+    try {
+      const data = JSON.parse(lastMessage.data);
+      setLastMessageTime(Date.now());
+      
+      // Handle price updates
+      if (data.type === 'price_update') {
+        const symbol = data.symbol;
+        const priceData = data.data;
+        
+        if (!symbol || !priceData) return;
+        
+        setPrices(prev => ({
+          ...prev,
+          [symbol]: priceData
+        }));
+      }
+      
+      // Handle candle updates
+      if (data.type === 'candle_update') {
+        const { symbol, timeframe, candle } = data;
+        
+        if (!candle || typeof candle !== 'object') return;
+        
+        const parsedCandle: CandleData = {
+          time: typeof candle.time === 'string' ? parseInt(candle.time, 10) : Number(candle.time),
+          open: parseFloat(candle.open) || 0,
+          high: parseFloat(candle.high) || 0,
+          low: parseFloat(candle.low) || 0,
+          close: parseFloat(candle.close) || 0,
+          tick_volume: parseInt(candle.tick_volume) || 0,
+          spread: parseFloat(candle.spread) || 0,
+          real_volume: parseInt(candle.real_volume) || 0,
+          volume: parseInt(candle.volume || candle.tick_volume) || 0
+        };
+        
+        console.log(`Received server candle for ${symbol} ${timeframe}: open=${parsedCandle.open}, close=${parsedCandle.close}, time=${new Date(Number(parsedCandle.time) * 1000).toLocaleTimeString()}`);
+        
+        // Update candles state
+        setLatestCandles(prev => {
+          const symbolCandles = prev[symbol] || {};
+          return {
+            ...prev,
+            [symbol]: {
+              ...symbolCandles,
+              [timeframe]: parsedCandle
+            }
+          };
+        });
+      }
+    } catch (error) {
+      console.error('Error parsing WebSocket message:', error);
+    }
+  }, [lastMessage]);
+
+  // Initial subscription - only when connection opens
+  useEffect(() => {
+    if (readyState === ReadyState.OPEN) {
+      subscribeToSymbols();
+    }
+  }, [readyState, subscribeToSymbols]);
+
+  // Handle timeframe changes
+  useEffect(() => {
+    if (readyState === ReadyState.OPEN && currentTimeframe && isInitializedRef.current) {
+      const timeframeChanged = currentTimeframe !== subscribedTimeframeRef.current;
+      
+      if (timeframeChanged) {
+        console.log(`Timeframe changed to ${currentTimeframe}, resubscribing...`);
+        
+        // Unsubscribe from old candle feeds
+        if (subscribedTimeframeRef.current) {
+          sendMessage(JSON.stringify({
+            type: 'unsubscribe_candles',
+            symbols: symbols
+          }));
+        }
+        
+        // Subscribe to new timeframe
+        sendMessage(JSON.stringify({
+          type: 'subscribe_candles',
+          symbols: symbols,
+          timeframe: currentTimeframe
+        }));
+        
+        subscribedTimeframeRef.current = currentTimeframe;
+      }
+    }
+  }, [currentTimeframe, readyState, symbols, sendMessage]);
+
+  // Heartbeat to maintain connection
+  useEffect(() => {
+    if (readyState !== ReadyState.OPEN) return;
+    
+    const heartbeatInterval = setInterval(() => {
+      sendMessage(JSON.stringify({ type: 'ping', timestamp: Date.now() }));
+      
+      // Check connection health
+      const now = Date.now();
+      if (now - lastMessageTime > 30000) {
+        console.warn('No messages received in 30 seconds');
+      }
+    }, 15000);
+    
+    return () => clearInterval(heartbeatInterval);
+  }, [readyState, sendMessage, lastMessageTime]);
 
   return { 
     prices, 
