@@ -1,4 +1,3 @@
-
 import React from 'react';
 import { Button } from "@/components/ui/button";
 import { 
@@ -50,13 +49,12 @@ const ChartToolbar: React.FC<ChartToolbarProps> = ({
   activeIndicators = [],
   onIndicatorToggle
 }) => {
-  // Group indicators by category
+  // Group indicators by category - removed 'breadth' category
   const indicatorsByCategory: Record<IndicatorCategory, typeof availableIndicators> = {
     momentum: {},
     trend: {},
     volume: {},
-    volatility: {},
-    breadth: {}
+    volatility: {}
   };
   
   Object.entries(availableIndicators).forEach(([id, indicator]) => {

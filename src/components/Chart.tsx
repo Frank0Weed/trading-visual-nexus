@@ -1,3 +1,4 @@
+
 import React, { useRef, useEffect, useState } from 'react';
 import { 
   createChart, 
@@ -14,7 +15,7 @@ import {
 } from 'lightweight-charts';
 import { cn } from '@/lib/utils';
 import { CandleData } from '@/services/apiService';
-import availableIndicators, { Indicator } from '@/utils/indicators';
+import availableIndicators, { BaseIndicator } from '@/utils/indicators';
 import { ZoomIn, ZoomOut } from 'lucide-react';
 import { Button } from './ui/button';
 
