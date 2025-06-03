@@ -40,7 +40,7 @@ const getNextCandleOpenTime = (currentTime: number, timeframe: string): number =
   return Math.ceil(currentTimeMs / milliseconds) * milliseconds / 1000;
 };
 
-// Helper function to check if a new candle has opened
+// Improved function to check if a new candle has opened
 const isNewCandleOpen = (previousTime: number, currentTime: number, timeframe: string): boolean => {
   const timeframeMinutes: Record<string, number> = {
     'M1': 1,
@@ -57,10 +57,31 @@ const isNewCandleOpen = (previousTime: number, currentTime: number, timeframe: s
   const minutes = timeframeMinutes[timeframe] || 1;
   const milliseconds = minutes * 60 * 1000;
   
+  // Calculate candle start times
   const prevCandleStart = Math.floor((previousTime * 1000) / milliseconds) * milliseconds;
   const currentCandleStart = Math.floor((currentTime * 1000) / milliseconds) * milliseconds;
   
   return prevCandleStart !== currentCandleStart;
+};
+
+// Function to get candle start time for a given timestamp and timeframe
+const getCandleStartTime = (timestamp: number, timeframe: string): number => {
+  const timeframeMinutes: Record<string, number> = {
+    'M1': 1,
+    'M5': 5,
+    'M15': 15,
+    'M30': 30,
+    'H1': 60,
+    'H4': 240,
+    'D1': 1440,
+    'W1': 10080,
+    'MN1': 43200
+  };
+
+  const minutes = timeframeMinutes[timeframe] || 1;
+  const milliseconds = minutes * 60 * 1000;
+  
+  return Math.floor((timestamp * 1000) / milliseconds) * milliseconds / 1000;
 };
 
 export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFeedProps): MarketDataFeedResult => {
@@ -72,7 +93,7 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
   const subscribedSymbolsRef = useRef<string>('');
   const subscribedTimeframeRef = useRef<string>('');
   const isInitializedRef = useRef<boolean>(false);
-  const lastCandleTimesRef = useRef<Record<string, Record<string, number>>>({});
+  const lastCandleStartTimesRef = useRef<Record<string, Record<string, number>>>({});
   
   const { sendMessage, lastMessage, readyState } = useWebSocket(getWebSocketUrl(), {
     shouldReconnect: () => true,
@@ -187,7 +208,7 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
         }
       }
       
-      // Handle candle updates with new candle detection
+      // Handle candle updates with improved new candle detection
       if (message.type === 'candle_update') {
         const { symbol, timeframe, candle } = message;
         
@@ -196,47 +217,57 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
         // Convert candle time to number - this fixes the TypeScript errors
         const candleTime = typeof candle.time === 'string' ? parseInt(candle.time, 10) : Number(candle.time);
         
+        // Use tick_volume for volume (priority: tick_volume > volume > 0)
+        const volume = parseInt(candle.tick_volume) || parseInt(candle.volume) || 0;
+        
         const parsedCandle: CandleData = {
           time: candleTime,
           open: parseFloat(candle.open) || 0,
           high: parseFloat(candle.high) || 0,
           low: parseFloat(candle.low) || 0,
           close: parseFloat(candle.close) || 0,
-          tick_volume: parseInt(candle.tick_volume) || 0,
+          tick_volume: volume,
           spread: parseFloat(candle.spread) || 0,
           real_volume: parseInt(candle.real_volume) || 0,
-          volume: parseInt(candle.volume || candle.tick_volume) || 0
+          volume: volume // Use tick_volume as primary volume
         };
         
-        // Check for new candle opening
-        const lastCandleTime = lastCandleTimesRef.current[symbol]?.[timeframe];
-        if (lastCandleTime && isNewCandleOpen(lastCandleTime, candleTime, timeframe)) {
-          console.log(`🕯️ NEW CANDLE OPENED: ${symbol} ${timeframe} at ${new Date(candleTime * 1000).toLocaleTimeString()}`);
+        // Calculate candle start time for this timeframe
+        const candleStartTime = getCandleStartTime(candleTime, timeframe);
+        
+        // Check for new candle opening by comparing candle start times
+        const lastCandleStartTime = lastCandleStartTimesRef.current[symbol]?.[timeframe];
+        
+        if (lastCandleStartTime && lastCandleStartTime !== candleStartTime) {
+          console.log(`🕯️ NEW CANDLE OPENED: ${symbol} ${timeframe} at ${new Date(candleStartTime * 1000).toLocaleTimeString()}`);
+          console.log(`Previous candle start: ${new Date(lastCandleStartTime * 1000).toLocaleTimeString()}`);
+          console.log(`Current candle start: ${new Date(candleStartTime * 1000).toLocaleTimeString()}`);
           
-          // Update new candle events
+          // Update new candle events with the new candle start time
           setNewCandleEvents(prev => ({
             ...prev,
             [symbol]: {
               ...prev[symbol],
-              [timeframe]: candleTime
+              [timeframe]: candleStartTime
             }
           }));
           
           // Toast notification for current timeframe
           if (timeframe === currentTimeframe) {
             toast.info(`New ${timeframe} candle opened for ${symbol}`, {
-              duration: 2000,
+              duration: 3000,
             });
           }
         }
         
-        // Update last candle time tracking
-        if (!lastCandleTimesRef.current[symbol]) {
-          lastCandleTimesRef.current[symbol] = {};
+        // Update last candle start time tracking
+        if (!lastCandleStartTimesRef.current[symbol]) {
+          lastCandleStartTimesRef.current[symbol] = {};
         }
-        lastCandleTimesRef.current[symbol][timeframe] = candleTime;
+        lastCandleStartTimesRef.current[symbol][timeframe] = candleStartTime;
         
         console.log(`Live candle update for ${symbol} ${timeframe}:`, parsedCandle);
+        console.log(`Candle start time: ${new Date(candleStartTime * 1000).toLocaleTimeString()}`);
         
         setLatestCandles(prev => {
           const symbolCandles = prev[symbol] || {};
