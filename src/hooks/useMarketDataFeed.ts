@@ -67,7 +67,7 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
     
     console.log('Subscribing to live data for symbols:', symbols);
     
-    // Subscribe to live price updates (tick data)
+    // Subscribe to live price updates using the correct message format
     sendMessage(JSON.stringify({
       type: 'subscribe_prices',
       symbols: symbols
@@ -93,12 +93,36 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
     if (!lastMessage) return;
     
     try {
-      const data = JSON.parse(lastMessage.data);
+      const message = JSON.parse(lastMessage.data);
       setLastMessageTime(Date.now());
       
-      // Handle live price updates (tick data)
-      if (data.type === 'price_tick' || data.type === 'price_update') {
-        const { symbol, bid, ask, time, spread } = data;
+      console.log('Received WebSocket message:', message);
+      
+      // Handle live price updates with the new format
+      if (message.type === 'price_update') {
+        const { symbol, data } = message;
+        
+        if (symbol && data && data.bid && data.ask) {
+          const { time, bid, ask, spread } = data;
+          
+          setPrices(prev => ({
+            ...prev,
+            [symbol]: {
+              symbol,
+              time: time || Date.now() / 1000,
+              bid: parseFloat(bid),
+              ask: parseFloat(ask),
+              spread: parseFloat(spread) || Math.abs(parseFloat(ask) - parseFloat(bid))
+            }
+          }));
+          
+          console.log(`Price update for ${symbol}: bid=${bid}, ask=${ask}, spread=${spread}`);
+        }
+      }
+      
+      // Also handle the old format for backwards compatibility
+      if (message.type === 'price_tick') {
+        const { symbol, bid, ask, time, spread } = message;
         
         if (symbol && bid && ask) {
           setPrices(prev => ({
@@ -115,8 +139,8 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
       }
       
       // Handle candle updates
-      if (data.type === 'candle_update') {
-        const { symbol, timeframe, candle } = data;
+      if (message.type === 'candle_update') {
+        const { symbol, timeframe, candle } = message;
         
         if (!candle || typeof candle !== 'object') return;
         
@@ -147,7 +171,7 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
       }
 
       // Handle heartbeat/pong
-      if (data.type === 'pong') {
+      if (message.type === 'pong') {
         console.log('Received heartbeat response');
       }
 
