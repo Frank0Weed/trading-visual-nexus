@@ -1,3 +1,4 @@
+
 import React, { useState, useCallback, useEffect } from 'react';
 import { ReadyState } from 'react-use-websocket';
 
@@ -13,7 +14,6 @@ import { useChartData } from '../hooks/useChartData';
 import { toast } from '@/components/ui/sonner';
 
 const TradingPlatform: React.FC = () => {
-  // State for user selections
   const [selectedSymbol, setSelectedSymbol] = useState<string>('XAUUSD');
   const [selectedTimeframe, setSelectedTimeframe] = useState<string>('M1');
   const [chartType, setChartType] = useState<ChartType>('candlestick');
@@ -21,15 +21,14 @@ const TradingPlatform: React.FC = () => {
   const [lastConnectionCheck, setLastConnectionCheck] = useState<number>(Date.now());
   const [lastTimeframeChange, setLastTimeframeChange] = useState<number>(Date.now());
 
-  // Initialize market data
+  // Initialize market data (only for symbols/timeframes, no prices)
   const { 
     symbols, 
     timeframes, 
-    initialPrices, 
     isLoading: isInitializing 
   } = useMarketInitialization();
 
-  // Subscribe to live market data via WebSocket
+  // Get live market data via WebSocket (prices + candles)
   const { 
     prices, 
     latestCandles,
@@ -41,7 +40,6 @@ const TradingPlatform: React.FC = () => {
     currentTimeframe: selectedTimeframe
   });
 
-  // Get the latest candle for the selected symbol and timeframe
   const latestCandle = latestCandles[selectedSymbol]?.[selectedTimeframe];
 
   // Fetch and format chart data
@@ -58,10 +56,9 @@ const TradingPlatform: React.FC = () => {
 
   // Monitor connection health
   useEffect(() => {
-    const CHECK_INTERVAL = 30000; // 30 seconds
+    const CHECK_INTERVAL = 30000;
     const connectionMonitor = setInterval(() => {
       const now = Date.now();
-      // Check if we haven't received a message in over 60 seconds
       if (now - lastMessageTime > 60000 && readyState !== ReadyState.CONNECTING) {
         if (now - lastConnectionCheck > CHECK_INTERVAL) {
           toast.warning("No market data received recently. Check your connection.");
@@ -79,7 +76,6 @@ const TradingPlatform: React.FC = () => {
   }, []);
 
   const handleTimeframeChange = useCallback((timeframe: string) => {
-    // Only process if actually changed or if sufficient time has passed since last change
     const now = Date.now();
     if (timeframe !== selectedTimeframe && now - lastTimeframeChange > 1000) {
       console.log(`Changing timeframe from ${selectedTimeframe} to ${timeframe}`);
@@ -102,14 +98,12 @@ const TradingPlatform: React.FC = () => {
     });
   }, []);
 
-  // Combine initial prices with live updates
-  const currentPrices = { ...initialPrices, ...prices };
+  // Use live WebSocket prices (no API fallback)
   const isLoading = isInitializing || isLoadingChart;
-  const latestPrice = currentPrices[selectedSymbol];
+  const latestPrice = prices[selectedSymbol];
 
   return (
     <div className="flex flex-col h-full">
-      {/* Header with connection status */}
       <TradingHeader
         connectionStatus={connectionStatus}
         readyState={readyState}
@@ -118,14 +112,12 @@ const TradingPlatform: React.FC = () => {
         onSelectSymbol={handleSymbolSelect}
       />
 
-      {/* Price ticker */}
       <PriceTicker
-        prices={currentPrices}
+        prices={prices}
         onSymbolSelect={handleSymbolSelect}
         selectedSymbol={selectedSymbol}
       />
 
-      {/* Chart toolbar */}
       <ChartToolbar
         chartType={chartType}
         onChartTypeChange={handleChartTypeChange}
@@ -136,7 +128,6 @@ const TradingPlatform: React.FC = () => {
         onIndicatorToggle={handleIndicatorToggle}
       />
 
-      {/* Main chart */}
       <ChartContainer
         isLoading={isLoading}
         candles={candles}
