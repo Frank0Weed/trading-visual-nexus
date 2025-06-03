@@ -28,13 +28,14 @@ const TradingPlatform: React.FC = () => {
     isLoading: isInitializing 
   } = useMarketInitialization();
 
-  // Get live market data via WebSocket (prices + candles)
+  // Get live market data via WebSocket (prices + candles + new candle events)
   const { 
     prices, 
     latestCandles,
     connectionStatus, 
     readyState,
-    lastMessageTime
+    lastMessageTime,
+    newCandleEvents
   } = useMarketDataFeed({ 
     symbols,
     currentTimeframe: selectedTimeframe
@@ -53,6 +54,29 @@ const TradingPlatform: React.FC = () => {
     chartType,
     latestCandle
   });
+
+  // Monitor new candle events and log them
+  useEffect(() => {
+    const currentNewCandleTime = newCandleEvents[selectedSymbol]?.[selectedTimeframe];
+    if (currentNewCandleTime) {
+      console.log(`📊 New ${selectedTimeframe} candle detected for ${selectedSymbol} at ${new Date(currentNewCandleTime * 1000).toLocaleString()}`);
+      
+      // You can add custom logic here for when a new candle opens
+      // For example: refresh indicators, trigger alerts, update strategies, etc.
+    }
+  }, [newCandleEvents, selectedSymbol, selectedTimeframe]);
+
+  // Monitor all timeframe new candle events
+  useEffect(() => {
+    const symbolNewCandles = newCandleEvents[selectedSymbol];
+    if (symbolNewCandles) {
+      Object.entries(symbolNewCandles).forEach(([timeframe, timestamp]) => {
+        if (timestamp) {
+          console.log(`🔔 All timeframes monitor: New ${timeframe} candle for ${selectedSymbol} at ${new Date(timestamp * 1000).toLocaleString()}`);
+        }
+      });
+    }
+  }, [newCandleEvents, selectedSymbol]);
 
   // Monitor connection health
   useEffect(() => {
@@ -138,6 +162,23 @@ const TradingPlatform: React.FC = () => {
         latestPrice={latestPrice}
         updateLatestPrice={updateLatestPrice}
       />
+
+      {/* New Candle Notification Display */}
+      {newCandleEvents[selectedSymbol] && (
+        <div className="absolute top-16 right-4 z-20 bg-primary/10 backdrop-blur-sm border border-primary/20 rounded-lg p-3 max-w-64">
+          <div className="text-xs font-medium text-primary mb-2">Recent New Candles ({selectedSymbol})</div>
+          <div className="space-y-1">
+            {Object.entries(newCandleEvents[selectedSymbol]).slice(-3).map(([timeframe, timestamp]) => (
+              <div key={timeframe} className="flex justify-between items-center text-xs">
+                <span className="text-muted-foreground">{timeframe}:</span>
+                <span className="font-mono text-foreground">
+                  {new Date(timestamp * 1000).toLocaleTimeString()}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 };

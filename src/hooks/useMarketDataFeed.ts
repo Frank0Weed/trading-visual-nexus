@@ -16,16 +16,63 @@ interface MarketDataFeedResult {
   readyState: ReadyState;
   sendMessage: (message: string) => void;
   lastMessageTime: number;
+  newCandleEvents: Record<string, Record<string, number>>; // symbol -> timeframe -> timestamp
 }
+
+// Helper function to calculate next candle open time
+const getNextCandleOpenTime = (currentTime: number, timeframe: string): number => {
+  const timeframeMinutes: Record<string, number> = {
+    'M1': 1,
+    'M5': 5,
+    'M15': 15,
+    'M30': 30,
+    'H1': 60,
+    'H4': 240,
+    'D1': 1440,
+    'W1': 10080,
+    'MN1': 43200
+  };
+
+  const minutes = timeframeMinutes[timeframe] || 1;
+  const milliseconds = minutes * 60 * 1000;
+  const currentTimeMs = currentTime * 1000;
+  
+  return Math.ceil(currentTimeMs / milliseconds) * milliseconds / 1000;
+};
+
+// Helper function to check if a new candle has opened
+const isNewCandleOpen = (previousTime: number, currentTime: number, timeframe: string): boolean => {
+  const timeframeMinutes: Record<string, number> = {
+    'M1': 1,
+    'M5': 5,
+    'M15': 15,
+    'M30': 30,
+    'H1': 60,
+    'H4': 240,
+    'D1': 1440,
+    'W1': 10080,
+    'MN1': 43200
+  };
+
+  const minutes = timeframeMinutes[timeframe] || 1;
+  const milliseconds = minutes * 60 * 1000;
+  
+  const prevCandleStart = Math.floor((previousTime * 1000) / milliseconds) * milliseconds;
+  const currentCandleStart = Math.floor((currentTime * 1000) / milliseconds) * milliseconds;
+  
+  return prevCandleStart !== currentCandleStart;
+};
 
 export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFeedProps): MarketDataFeedResult => {
   const [prices, setPrices] = useState<Record<string, PriceData>>({});
   const [latestCandles, setLatestCandles] = useState<Record<string, Record<string, CandleData>>>({});
+  const [newCandleEvents, setNewCandleEvents] = useState<Record<string, Record<string, number>>>({});
   const [lastMessageTime, setLastMessageTime] = useState<number>(Date.now());
   
   const subscribedSymbolsRef = useRef<string>('');
   const subscribedTimeframeRef = useRef<string>('');
   const isInitializedRef = useRef<boolean>(false);
+  const lastCandleTimesRef = useRef<Record<string, Record<string, number>>>({});
   
   const { sendMessage, lastMessage, readyState } = useWebSocket(getWebSocketUrl(), {
     shouldReconnect: () => true,
@@ -73,15 +120,17 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
       symbols: symbols
     }));
     
-    // Subscribe to candle updates if timeframe is available
-    if (currentTimeframe) {
-      console.log(`Subscribing to candles for timeframe: ${currentTimeframe}`);
+    // Subscribe to all timeframes for new candle detection
+    const allTimeframes = ['M1', 'M5', 'M15', 'M30', 'H1', 'H4', 'D1', 'W1', 'MN1'];
+    
+    allTimeframes.forEach(timeframe => {
+      console.log(`Subscribing to candles for timeframe: ${timeframe}`);
       sendMessage(JSON.stringify({
         type: 'subscribe_candles',
         symbols: symbols,
-        timeframe: currentTimeframe
+        timeframe: timeframe
       }));
-    }
+    });
     
     subscribedSymbolsRef.current = symbolsKey;
     subscribedTimeframeRef.current = currentTimeframe || '';
@@ -138,7 +187,7 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
         }
       }
       
-      // Handle candle updates
+      // Handle candle updates with new candle detection
       if (message.type === 'candle_update') {
         const { symbol, timeframe, candle } = message;
         
@@ -156,6 +205,34 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
           volume: parseInt(candle.volume || candle.tick_volume) || 0
         };
         
+        // Check for new candle opening
+        const lastCandleTime = lastCandleTimesRef.current[symbol]?.[timeframe];
+        if (lastCandleTime && isNewCandleOpen(lastCandleTime, parsedCandle.time, timeframe)) {
+          console.log(`🕯️ NEW CANDLE OPENED: ${symbol} ${timeframe} at ${new Date(parsedCandle.time * 1000).toLocaleTimeString()}`);
+          
+          // Update new candle events
+          setNewCandleEvents(prev => ({
+            ...prev,
+            [symbol]: {
+              ...prev[symbol],
+              [timeframe]: parsedCandle.time
+            }
+          }));
+          
+          // Toast notification for current timeframe
+          if (timeframe === currentTimeframe) {
+            toast.info(`New ${timeframe} candle opened for ${symbol}`, {
+              duration: 2000,
+            });
+          }
+        }
+        
+        // Update last candle time tracking
+        if (!lastCandleTimesRef.current[symbol]) {
+          lastCandleTimesRef.current[symbol] = {};
+        }
+        lastCandleTimesRef.current[symbol][timeframe] = parsedCandle.time;
+        
         console.log(`Live candle update for ${symbol} ${timeframe}:`, parsedCandle);
         
         setLatestCandles(prev => {
@@ -170,6 +247,27 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
         });
       }
 
+      // Handle new candle notifications from server
+      if (message.type === 'new_candle_open') {
+        const { symbol, timeframe, time } = message;
+        
+        console.log(`🔔 Server notification: New ${timeframe} candle opened for ${symbol}`);
+        
+        setNewCandleEvents(prev => ({
+          ...prev,
+          [symbol]: {
+            ...prev[symbol],
+            [timeframe]: time
+          }
+        }));
+        
+        if (timeframe === currentTimeframe) {
+          toast.success(`New ${timeframe} candle opened for ${symbol}`, {
+            duration: 3000,
+          });
+        }
+      }
+
       // Handle heartbeat/pong
       if (message.type === 'pong') {
         console.log('Received heartbeat response');
@@ -178,7 +276,7 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
     } catch (error) {
       console.error('Error parsing WebSocket message:', error);
     }
-  }, [lastMessage]);
+  }, [lastMessage, currentTimeframe]);
 
   // Subscribe when connection opens
   useEffect(() => {
@@ -194,20 +292,6 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
       
       if (timeframeChanged) {
         console.log(`Timeframe changed to ${currentTimeframe}, resubscribing...`);
-        
-        if (subscribedTimeframeRef.current) {
-          sendMessage(JSON.stringify({
-            type: 'unsubscribe_candles',
-            symbols: symbols
-          }));
-        }
-        
-        sendMessage(JSON.stringify({
-          type: 'subscribe_candles',
-          symbols: symbols,
-          timeframe: currentTimeframe
-        }));
-        
         subscribedTimeframeRef.current = currentTimeframe;
       }
     }
@@ -235,6 +319,7 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
     connectionStatus, 
     readyState,
     sendMessage,
-    lastMessageTime
+    lastMessageTime,
+    newCandleEvents
   };
 };
