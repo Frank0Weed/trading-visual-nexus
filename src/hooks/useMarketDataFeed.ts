@@ -193,8 +193,11 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
         
         if (!candle || typeof candle !== 'object') return;
         
+        // Convert candle time to number - this fixes the TypeScript errors
+        const candleTime = typeof candle.time === 'string' ? parseInt(candle.time, 10) : Number(candle.time);
+        
         const parsedCandle: CandleData = {
-          time: typeof candle.time === 'string' ? parseInt(candle.time, 10) : Number(candle.time),
+          time: candleTime,
           open: parseFloat(candle.open) || 0,
           high: parseFloat(candle.high) || 0,
           low: parseFloat(candle.low) || 0,
@@ -207,15 +210,15 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
         
         // Check for new candle opening
         const lastCandleTime = lastCandleTimesRef.current[symbol]?.[timeframe];
-        if (lastCandleTime && isNewCandleOpen(lastCandleTime, parsedCandle.time, timeframe)) {
-          console.log(`🕯️ NEW CANDLE OPENED: ${symbol} ${timeframe} at ${new Date(parsedCandle.time * 1000).toLocaleTimeString()}`);
+        if (lastCandleTime && isNewCandleOpen(lastCandleTime, candleTime, timeframe)) {
+          console.log(`🕯️ NEW CANDLE OPENED: ${symbol} ${timeframe} at ${new Date(candleTime * 1000).toLocaleTimeString()}`);
           
           // Update new candle events
           setNewCandleEvents(prev => ({
             ...prev,
             [symbol]: {
               ...prev[symbol],
-              [timeframe]: parsedCandle.time
+              [timeframe]: candleTime
             }
           }));
           
@@ -231,7 +234,7 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
         if (!lastCandleTimesRef.current[symbol]) {
           lastCandleTimesRef.current[symbol] = {};
         }
-        lastCandleTimesRef.current[symbol][timeframe] = parsedCandle.time;
+        lastCandleTimesRef.current[symbol][timeframe] = candleTime;
         
         console.log(`Live candle update for ${symbol} ${timeframe}:`, parsedCandle);
         
