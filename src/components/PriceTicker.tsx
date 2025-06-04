@@ -1,5 +1,5 @@
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { cn } from '@/lib/utils';
 import { PriceData } from '@/services/apiService';
 
@@ -17,37 +17,41 @@ const PriceTicker: React.FC<PriceTickerProps> = ({
   className
 }) => {
   const [priceChanges, setPriceChanges] = useState<Record<string, 'up' | 'down' | null>>({});
+  const prevPricesRef = useRef<Record<string, PriceData>>({});
 
   useEffect(() => {
-    const prevPrices = { ...prices };
+    const changes: Record<string, 'up' | 'down' | null> = {};
     
-    const trackChanges = () => {
-      const changes: Record<string, 'up' | 'down' | null> = {};
+    Object.keys(prices).forEach(symbol => {
+      const currentPrice = prices[symbol];
+      const previousPrice = prevPricesRef.current[symbol];
       
-      Object.keys(prices).forEach(symbol => {
-        if (prevPrices[symbol] && prices[symbol]) {
-          if (prices[symbol].bid > prevPrices[symbol].bid) {
-            changes[symbol] = 'up';
-          } else if (prices[symbol].bid < prevPrices[symbol].bid) {
-            changes[symbol] = 'down';
-          }
+      if (previousPrice && currentPrice) {
+        if (currentPrice.bid > previousPrice.bid) {
+          changes[symbol] = 'up';
+        } else if (currentPrice.bid < previousPrice.bid) {
+          changes[symbol] = 'down';
         }
-      });
-      
+      }
+    });
+    
+    // Only update if there are actual changes
+    if (Object.keys(changes).length > 0) {
       setPriceChanges(changes);
       
       // Reset changes after animation
-      setTimeout(() => {
+      const timeout = setTimeout(() => {
         setPriceChanges({});
       }, 1000);
-    };
-    
-    trackChanges();
-    
-    // Update prevPrices for next comparison
-    Object.keys(prices).forEach(symbol => {
-      prevPrices[symbol] = { ...prices[symbol] };
-    });
+      
+      // Store current prices as previous for next comparison
+      prevPricesRef.current = { ...prices };
+      
+      return () => clearTimeout(timeout);
+    } else {
+      // Still update the ref even if no visual changes
+      prevPricesRef.current = { ...prices };
+    }
   }, [prices]);
   
   return (

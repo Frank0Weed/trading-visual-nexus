@@ -131,16 +131,16 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
   }, [readyState, symbols, currentTimeframe, sendMessage]);
 
   // Handle WebSocket messages with improved duplicate prevention
-  useEffect(() => {
-    if (!lastMessage) return;
+  const handleMessage = useCallback((message: any) => {
+    if (!message) return;
     
     try {
-      const message = JSON.parse(lastMessage.data);
+      const parsedMessage = JSON.parse(message.data);
       setLastMessageTime(Date.now());
       
       // Handle live price updates with duplicate prevention
-      if (message.type === 'price_update') {
-        const { symbol, data } = message;
+      if (parsedMessage.type === 'price_update') {
+        const { symbol, data } = parsedMessage;
         
         if (symbol && data && data.bid && data.ask) {
           const { time, bid, ask, spread } = data;
@@ -169,18 +169,13 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
             
             // Update last price reference
             lastPriceUpdateRef.current[symbol] = { time: timeNum, bid: bidNum, ask: askNum };
-            
-            // Only log significant price changes (every 10th update or price change > 0.1)
-            if (!lastUpdate || Math.abs(bidNum - lastUpdate.bid) > 0.1) {
-              console.log(`Price update for ${symbol}: bid=${bidNum}, ask=${askNum}`);
-            }
           }
         }
       }
       
       // Handle old format for backwards compatibility with duplicate prevention
-      if (message.type === 'price_tick') {
-        const { symbol, bid, ask, time, spread } = message;
+      if (parsedMessage.type === 'price_tick') {
+        const { symbol, bid, ask, time, spread } = parsedMessage;
         
         if (symbol && bid && ask) {
           const bidNum = parseFloat(bid);
@@ -212,14 +207,13 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
       }
       
       // Handle candle updates with improved new candle detection and duplicate prevention
-      if (message.type === 'candle_update') {
-        const { symbol, timeframe } = message;
+      if (parsedMessage.type === 'candle_update') {
+        const { symbol, timeframe } = parsedMessage;
         
         // Use 'data' field from WebSocket message
-        const candleData = message.data || message.candle;
+        const candleData = parsedMessage.data || parsedMessage.candle;
         
         if (!candleData || typeof candleData !== 'object') {
-          console.warn('Invalid candle data received for', symbol, timeframe);
           return;
         }
         
@@ -227,7 +221,6 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
         const candleTime = typeof candleData.time === 'string' ? parseInt(candleData.time, 10) : Number(candleData.time);
         
         if (isNaN(candleTime) || candleTime <= 0) {
-          console.warn('Invalid candle time for', symbol, timeframe, ':', candleData.time);
           return;
         }
         
@@ -274,8 +267,6 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
         
         // Check if this is a NEW candle period
         if (isNewCandlePeriod(candleTime, lastCandleStartTime, timeframe)) {
-          console.log(`🕯️ NEW CANDLE: ${symbol} ${timeframe} opened at ${new Date(candleStartTime * 1000).toLocaleTimeString()}`);
-          
           // Update new candle events with the new candle start time
           setNewCandleEvents(prev => ({
             ...prev,
@@ -313,10 +304,8 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
       }
 
       // Handle server-side new candle notifications
-      if (message.type === 'new_candle_open') {
-        const { symbol, timeframe, time } = message;
-        
-        console.log(`🔔 Server: New ${timeframe} candle for ${symbol}`);
+      if (parsedMessage.type === 'new_candle_open') {
+        const { symbol, timeframe, time } = parsedMessage;
         
         setNewCandleEvents(prev => ({
           ...prev,
@@ -333,37 +322,24 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
         }
       }
 
-      // Handle heartbeat/pong - reduce logging frequency
-      if (message.type === 'pong') {
-        // Only log pong every 5th time to reduce noise
-        if (Math.random() < 0.2) {
-          console.log('Heartbeat OK');
-        }
-      }
-
     } catch (error) {
       console.error('Error parsing WebSocket message:', error);
     }
-  }, [lastMessage, currentTimeframe]);
+  }, [currentTimeframe]);
 
-  // Subscribe when connection opens
+  // Handle WebSocket messages
+  useEffect(() => {
+    if (lastMessage) {
+      handleMessage(lastMessage);
+    }
+  }, [lastMessage, handleMessage]);
+
+  // Subscribe when connection opens - stable dependency array
   useEffect(() => {
     if (readyState === ReadyState.OPEN) {
       subscribeToData();
     }
   }, [readyState, subscribeToData]);
-
-  // Handle timeframe changes
-  useEffect(() => {
-    if (readyState === ReadyState.OPEN && currentTimeframe && isInitializedRef.current) {
-      const timeframeChanged = currentTimeframe !== subscribedTimeframeRef.current;
-      
-      if (timeframeChanged) {
-        console.log(`Timeframe changed to ${currentTimeframe}`);
-        subscribedTimeframeRef.current = currentTimeframe;
-      }
-    }
-  }, [currentTimeframe, readyState, symbols, sendMessage]);
 
   // Heartbeat to maintain connection - reduce frequency
   useEffect(() => {
