@@ -1,3 +1,4 @@
+
 import { useState, useEffect, useCallback, useRef } from 'react';
 import useWebSocket, { ReadyState } from 'react-use-websocket';
 import { getWebSocketUrl, PriceData, CandleData } from '../services/apiService';
@@ -63,6 +64,10 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
   // Track the candle START times for accurate new candle detection
   const lastCandleStartTimesRef = useRef<Record<string, Record<string, number>>>({});
   
+  // Add refs to prevent duplicate processing
+  const lastPriceUpdateRef = useRef<Record<string, { time: number; bid: number; ask: number }>>({});
+  const lastCandleUpdateRef = useRef<Record<string, Record<string, { time: number; close: number }>>>({});
+  
   const { sendMessage, lastMessage, readyState } = useWebSocket(getWebSocketUrl(), {
     shouldReconnect: () => true,
     reconnectAttempts: 10,
@@ -113,7 +118,6 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
     const allTimeframes = ['M1', 'M5', 'M15', 'M30', 'H1', 'H4', 'D1', 'W1', 'MN1'];
     
     allTimeframes.forEach(timeframe => {
-      console.log(`Subscribing to candles for timeframe: ${timeframe}`);
       sendMessage(JSON.stringify({
         type: 'subscribe_candles',
         symbols: symbols,
@@ -126,7 +130,7 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
     isInitializedRef.current = true;
   }, [readyState, symbols, currentTimeframe, sendMessage]);
 
-  // Handle WebSocket messages
+  // Handle WebSocket messages with improved duplicate prevention
   useEffect(() => {
     if (!lastMessage) return;
     
@@ -134,49 +138,80 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
       const message = JSON.parse(lastMessage.data);
       setLastMessageTime(Date.now());
       
-      console.log('Received WebSocket message:', message);
-      
-      // Handle live price updates
+      // Handle live price updates with duplicate prevention
       if (message.type === 'price_update') {
         const { symbol, data } = message;
         
         if (symbol && data && data.bid && data.ask) {
           const { time, bid, ask, spread } = data;
+          const bidNum = parseFloat(bid);
+          const askNum = parseFloat(ask);
+          const timeNum = time || Date.now() / 1000;
           
-          setPrices(prev => ({
-            ...prev,
-            [symbol]: {
-              symbol,
-              time: time || Date.now() / 1000,
-              bid: parseFloat(bid),
-              ask: parseFloat(ask),
-              spread: parseFloat(spread) || Math.abs(parseFloat(ask) - parseFloat(bid))
+          // Check for duplicates
+          const lastUpdate = lastPriceUpdateRef.current[symbol];
+          const isDuplicate = lastUpdate && 
+            lastUpdate.time === timeNum && 
+            lastUpdate.bid === bidNum && 
+            lastUpdate.ask === askNum;
+          
+          if (!isDuplicate) {
+            setPrices(prev => ({
+              ...prev,
+              [symbol]: {
+                symbol,
+                time: timeNum,
+                bid: bidNum,
+                ask: askNum,
+                spread: parseFloat(spread) || Math.abs(askNum - bidNum)
+              }
+            }));
+            
+            // Update last price reference
+            lastPriceUpdateRef.current[symbol] = { time: timeNum, bid: bidNum, ask: askNum };
+            
+            // Only log significant price changes (every 10th update or price change > 0.1)
+            if (!lastUpdate || Math.abs(bidNum - lastUpdate.bid) > 0.1) {
+              console.log(`Price update for ${symbol}: bid=${bidNum}, ask=${askNum}`);
             }
-          }));
-          
-          console.log(`Price update for ${symbol}: bid=${bid}, ask=${ask}, spread=${spread}`);
+          }
         }
       }
       
-      // Handle old format for backwards compatibility
+      // Handle old format for backwards compatibility with duplicate prevention
       if (message.type === 'price_tick') {
         const { symbol, bid, ask, time, spread } = message;
         
         if (symbol && bid && ask) {
-          setPrices(prev => ({
-            ...prev,
-            [symbol]: {
-              symbol,
-              time: time || Date.now() / 1000,
-              bid: parseFloat(bid),
-              ask: parseFloat(ask),
-              spread: parseFloat(spread) || Math.abs(parseFloat(ask) - parseFloat(bid))
-            }
-          }));
+          const bidNum = parseFloat(bid);
+          const askNum = parseFloat(ask);
+          const timeNum = time || Date.now() / 1000;
+          
+          // Check for duplicates
+          const lastUpdate = lastPriceUpdateRef.current[symbol];
+          const isDuplicate = lastUpdate && 
+            lastUpdate.time === timeNum && 
+            lastUpdate.bid === bidNum && 
+            lastUpdate.ask === askNum;
+          
+          if (!isDuplicate) {
+            setPrices(prev => ({
+              ...prev,
+              [symbol]: {
+                symbol,
+                time: timeNum,
+                bid: bidNum,
+                ask: askNum,
+                spread: parseFloat(spread) || Math.abs(askNum - bidNum)
+              }
+            }));
+            
+            lastPriceUpdateRef.current[symbol] = { time: timeNum, bid: bidNum, ask: askNum };
+          }
         }
       }
       
-      // Handle candle updates with improved new candle detection
+      // Handle candle updates with improved new candle detection and duplicate prevention
       if (message.type === 'candle_update') {
         const { symbol, timeframe } = message;
         
@@ -184,7 +219,7 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
         const candleData = message.data || message.candle;
         
         if (!candleData || typeof candleData !== 'object') {
-          console.warn('Invalid candle data received:', message);
+          console.warn('Invalid candle data received for', symbol, timeframe);
           return;
         }
         
@@ -192,8 +227,24 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
         const candleTime = typeof candleData.time === 'string' ? parseInt(candleData.time, 10) : Number(candleData.time);
         
         if (isNaN(candleTime) || candleTime <= 0) {
-          console.warn('Invalid candle time:', candleData.time);
+          console.warn('Invalid candle time for', symbol, timeframe, ':', candleData.time);
           return;
+        }
+        
+        const closePrice = parseFloat(candleData.close) || 0;
+        
+        // Check for duplicate candle updates
+        if (!lastCandleUpdateRef.current[symbol]) {
+          lastCandleUpdateRef.current[symbol] = {};
+        }
+        
+        const lastCandle = lastCandleUpdateRef.current[symbol][timeframe];
+        const isDuplicateCandle = lastCandle && 
+          lastCandle.time === candleTime && 
+          lastCandle.close === closePrice;
+        
+        if (isDuplicateCandle) {
+          return; // Skip duplicate candle updates
         }
         
         // Calculate the candle start time for this period
@@ -207,7 +258,7 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
           open: parseFloat(candleData.open) || 0,
           high: parseFloat(candleData.high) || 0,
           low: parseFloat(candleData.low) || 0,
-          close: parseFloat(candleData.close) || 0,
+          close: closePrice,
           tick_volume: tickVolume,
           spread: parseFloat(candleData.spread) || 0,
           real_volume: parseInt(candleData.real_volume) || 0,
@@ -223,11 +274,7 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
         
         // Check if this is a NEW candle period
         if (isNewCandlePeriod(candleTime, lastCandleStartTime, timeframe)) {
-          console.log(`🕯️ NEW CANDLE PERIOD DETECTED: ${symbol} ${timeframe}`);
-          console.log(`Previous candle start: ${lastCandleStartTime ? new Date(lastCandleStartTime * 1000).toLocaleTimeString() : 'None'}`);
-          console.log(`Current candle start: ${new Date(candleStartTime * 1000).toLocaleTimeString()}`);
-          console.log(`Current candle time: ${new Date(candleTime * 1000).toLocaleTimeString()}`);
-          console.log(`Volume: ${tickVolume}`);
+          console.log(`🕯️ NEW CANDLE: ${symbol} ${timeframe} opened at ${new Date(candleStartTime * 1000).toLocaleTimeString()}`);
           
           // Update new candle events with the new candle start time
           setNewCandleEvents(prev => ({
@@ -241,15 +288,13 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
           // Update the tracking with new candle start time
           lastCandleStartTimesRef.current[symbol][timeframe] = candleStartTime;
           
-          // Toast notification for current timeframe
+          // Toast notification for current timeframe only
           if (timeframe === currentTimeframe) {
             toast.info(`🕯️ New ${timeframe} candle opened for ${symbol}`, {
               duration: 3000,
             });
           }
         }
-        
-        console.log(`Live candle update for ${symbol} ${timeframe} (Volume: ${tickVolume}):`, parsedCandle);
         
         // Update latest candles state - always update with proper volume
         setLatestCandles(prev => {
@@ -262,13 +307,16 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
             }
           };
         });
+        
+        // Update last candle reference
+        lastCandleUpdateRef.current[symbol][timeframe] = { time: candleTime, close: closePrice };
       }
 
       // Handle server-side new candle notifications
       if (message.type === 'new_candle_open') {
         const { symbol, timeframe, time } = message;
         
-        console.log(`🔔 Server notification: New ${timeframe} candle opened for ${symbol}`);
+        console.log(`🔔 Server: New ${timeframe} candle for ${symbol}`);
         
         setNewCandleEvents(prev => ({
           ...prev,
@@ -285,9 +333,12 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
         }
       }
 
-      // Handle heartbeat/pong
+      // Handle heartbeat/pong - reduce logging frequency
       if (message.type === 'pong') {
-        console.log('Received heartbeat response');
+        // Only log pong every 5th time to reduce noise
+        if (Math.random() < 0.2) {
+          console.log('Heartbeat OK');
+        }
       }
 
     } catch (error) {
@@ -308,13 +359,13 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
       const timeframeChanged = currentTimeframe !== subscribedTimeframeRef.current;
       
       if (timeframeChanged) {
-        console.log(`Timeframe changed to ${currentTimeframe}, resubscribing...`);
+        console.log(`Timeframe changed to ${currentTimeframe}`);
         subscribedTimeframeRef.current = currentTimeframe;
       }
     }
   }, [currentTimeframe, readyState, symbols, sendMessage]);
 
-  // Heartbeat to maintain connection
+  // Heartbeat to maintain connection - reduce frequency
   useEffect(() => {
     if (readyState !== ReadyState.OPEN) return;
     
