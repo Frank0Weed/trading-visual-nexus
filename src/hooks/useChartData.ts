@@ -1,3 +1,4 @@
+
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { toast } from '@/components/ui/sonner';
 import { 
@@ -22,27 +23,47 @@ interface ChartDataResult {
   updateLatestPrice: (price: number) => void;
 }
 
+// Extended types to include volume data
+interface ExtendedLineData extends LineData<Time> {
+  tick_volume?: number;
+  volume?: number;
+}
+
+interface ExtendedCandlestickData extends CandlestickData<Time> {
+  tick_volume?: number;
+  volume?: number;
+}
+
 // Helper function to format candle data to match Chart component requirements - with proper volume
-const formatCandleData = (candles: CandleData[], chartType: ChartType): CandlestickData<Time>[] | LineData<Time>[] => {
+const formatCandleData = (candles: CandleData[], chartType: ChartType): ExtendedCandlestickData[] | ExtendedLineData[] => {
   if (chartType === 'line' || chartType === 'area') {
     return candles.map(candle => {
       const timeValue = typeof candle.time === 'string' 
         ? new Date(candle.time).getTime() / 1000
         : Number(candle.time);
         
+      const tickVolume = candle.tick_volume || candle.volume || 0;
+        
       return {
         time: timeValue as Time,
         value: candle.close,
-        // Preserve volume data
-        tick_volume: candle.tick_volume || candle.volume || 0,
-        volume: candle.tick_volume || candle.volume || 0
-      };
-    }) as LineData<Time>[];
+        // Store volume data in customValues to avoid TypeScript errors
+        customValues: {
+          tick_volume: tickVolume,
+          volume: tickVolume
+        },
+        // Also store as direct properties for backward compatibility
+        tick_volume: tickVolume,
+        volume: tickVolume
+      } as ExtendedLineData;
+    });
   } else {
     return candles.map(candle => {
       const timeValue = typeof candle.time === 'string' 
         ? new Date(candle.time).getTime() / 1000
         : Number(candle.time);
+        
+      const tickVolume = candle.tick_volume || candle.volume || 0;
         
       return {
         time: timeValue as Time,
@@ -50,11 +71,16 @@ const formatCandleData = (candles: CandleData[], chartType: ChartType): Candlest
         high: candle.high,
         low: candle.low,
         close: candle.close,
-        // Preserve volume data for candlestick charts
-        tick_volume: candle.tick_volume || candle.volume || 0,
-        volume: candle.tick_volume || candle.volume || 0
-      };
-    }) as CandlestickData<Time>[];
+        // Store volume data in customValues to avoid TypeScript errors
+        customValues: {
+          tick_volume: tickVolume,
+          volume: tickVolume
+        },
+        // Also store as direct properties for backward compatibility
+        tick_volume: tickVolume,
+        volume: tickVolume
+      } as ExtendedCandlestickData;
+    });
   }
 };
 
@@ -80,7 +106,7 @@ export const useChartData = ({
   chartType,
   latestCandle
 }: UseChartDataProps): ChartDataResult => {
-  const [candles, setCandles] = useState<CandlestickData<Time>[] | LineData<Time>[]>([]);
+  const [candles, setCandles] = useState<ExtendedCandlestickData[] | ExtendedLineData[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   
   // Use refs to prevent unnecessary updates
@@ -105,9 +131,9 @@ export const useChartData = ({
         let formattedData = formatCandleData(data, chartType);
         
         if (chartType === 'line' || chartType === 'area') {
-          formattedData = ensureUniqueTimestamps<LineData<Time>>(formattedData as LineData<Time>[]);
+          formattedData = ensureUniqueTimestamps<ExtendedLineData>(formattedData as ExtendedLineData[]);
         } else {
-          formattedData = ensureUniqueTimestamps<CandlestickData<Time>>(formattedData as CandlestickData<Time>[]);
+          formattedData = ensureUniqueTimestamps<ExtendedCandlestickData>(formattedData as ExtendedCandlestickData[]);
         }
         
         // Log volume data to verify it's being included
@@ -147,19 +173,24 @@ export const useChartData = ({
     setCandles(prevCandles => {
       if (!prevCandles || prevCandles.length === 0) return prevCandles;
       
+      const tickVolume = candle.tick_volume || candle.volume || 0;
+      
       if (chartType === 'line' || chartType === 'area') {
-        const lineCandles = [...prevCandles] as LineData<Time>[];
+        const lineCandles = [...prevCandles] as ExtendedLineData[];
         const candleIndex = lineCandles.findIndex(c => Number(c.time) === timeValue);
         
-        const lineCandle: LineData<Time> = {
+        const lineCandle: ExtendedLineData = {
           time: timeValue as Time,
           value: candle.close,
-          // Preserve volume data
-          tick_volume: candle.tick_volume || candle.volume || 0,
-          volume: candle.tick_volume || candle.volume || 0
+          customValues: {
+            tick_volume: tickVolume,
+            volume: tickVolume
+          },
+          tick_volume: tickVolume,
+          volume: tickVolume
         };
         
-        let updatedCandles: LineData<Time>[];
+        let updatedCandles: ExtendedLineData[];
         
         if (candleIndex >= 0) {
           updatedCandles = [...lineCandles];
@@ -170,21 +201,24 @@ export const useChartData = ({
         
         return ensureUniqueTimestamps(updatedCandles);
       } else {
-        const candlestickCandles = [...prevCandles] as CandlestickData<Time>[];
+        const candlestickCandles = [...prevCandles] as ExtendedCandlestickData[];
         const candleIndex = candlestickCandles.findIndex(c => Number(c.time) === timeValue);
         
-        const candlestickData: CandlestickData<Time> = {
+        const candlestickData: ExtendedCandlestickData = {
           time: timeValue as Time,
           open: candle.open,
           high: candle.high,
           low: candle.low,
           close: candle.close,
-          // Preserve volume data
-          tick_volume: candle.tick_volume || candle.volume || 0,
-          volume: candle.tick_volume || candle.volume || 0
+          customValues: {
+            tick_volume: tickVolume,
+            volume: tickVolume
+          },
+          tick_volume: tickVolume,
+          volume: tickVolume
         };
         
-        let updatedCandles: CandlestickData<Time>[];
+        let updatedCandles: ExtendedCandlestickData[];
         
         if (candleIndex >= 0) {
           updatedCandles = [...candlestickCandles];
@@ -214,7 +248,7 @@ export const useChartData = ({
       setCandles(prevCandles => {
         if (!prevCandles || prevCandles.length === 0) return prevCandles;
         
-        const lineCandles = [...prevCandles] as LineData<Time>[];
+        const lineCandles = [...prevCandles] as ExtendedLineData[];
         const lastCandle = { ...lineCandles[lineCandles.length - 1] };
         
         if (lastCandle.value === price) return lineCandles;
@@ -230,7 +264,7 @@ export const useChartData = ({
       setCandles(prevCandles => {
         if (!prevCandles || prevCandles.length === 0) return prevCandles;
         
-        const candlestickCandles = [...prevCandles] as CandlestickData<Time>[];
+        const candlestickCandles = [...prevCandles] as ExtendedCandlestickData[];
         const lastCandle = { ...candlestickCandles[candlestickCandles.length - 1] };
         
         if (lastCandle.close === price) return candlestickCandles;
@@ -239,7 +273,10 @@ export const useChartData = ({
         lastCandle.low = Math.min(lastCandle.low, price);
         lastCandle.close = price;
         // Preserve volume data
-        lastCandle.volume = lastCandle.volume || lastCandle.tick_volume || 0;
+        const existingVolume = lastCandle.tick_volume || lastCandle.volume || 
+                             lastCandle.customValues?.tick_volume || lastCandle.customValues?.volume || 0;
+        lastCandle.volume = existingVolume;
+        lastCandle.tick_volume = existingVolume;
         
         return [
           ...candlestickCandles.slice(0, -1),
@@ -266,7 +303,7 @@ export const useChartData = ({
   }, [latestCandle, updateLatestCandle]);
 
   return {
-    candles,
+    candles: candles as CandlestickData<Time>[] | LineData<Time>[],
     isLoading,
     updateLatestCandle,
     updateLatestPrice
