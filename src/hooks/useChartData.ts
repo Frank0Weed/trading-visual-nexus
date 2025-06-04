@@ -1,4 +1,3 @@
-
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { toast } from '@/components/ui/sonner';
 import { 
@@ -23,7 +22,7 @@ interface ChartDataResult {
   updateLatestPrice: (price: number) => void;
 }
 
-// Helper function to format candle data to match Chart component requirements
+// Helper function to format candle data to match Chart component requirements - with proper volume
 const formatCandleData = (candles: CandleData[], chartType: ChartType): CandlestickData<Time>[] | LineData<Time>[] => {
   if (chartType === 'line' || chartType === 'area') {
     return candles.map(candle => {
@@ -34,6 +33,9 @@ const formatCandleData = (candles: CandleData[], chartType: ChartType): Candlest
       return {
         time: timeValue as Time,
         value: candle.close,
+        // Preserve volume data
+        tick_volume: candle.tick_volume || candle.volume || 0,
+        volume: candle.tick_volume || candle.volume || 0
       };
     }) as LineData<Time>[];
   } else {
@@ -48,12 +50,15 @@ const formatCandleData = (candles: CandleData[], chartType: ChartType): Candlest
         high: candle.high,
         low: candle.low,
         close: candle.close,
+        // Preserve volume data for candlestick charts
+        tick_volume: candle.tick_volume || candle.volume || 0,
+        volume: candle.tick_volume || candle.volume || 0
       };
     }) as CandlestickData<Time>[];
   }
 };
 
-// Helper to ensure time values are unique and properly sorted
+// Helper to ensure time values are unique and properly sorted with volume preserved
 function ensureUniqueTimestamps<T extends {time: Time}>(data: T[]): T[] {
   const uniqueTimeMap = new Map<number, T>();
   
@@ -96,6 +101,7 @@ export const useChartData = ({
         console.log(`Fetching candles for ${selectedSymbol} ${selectedTimeframe}`);
         const data = await fetchCandles(selectedSymbol, selectedTimeframe, 500);
         
+        // Ensure volume data is preserved when formatting
         let formattedData = formatCandleData(data, chartType);
         
         if (chartType === 'line' || chartType === 'area') {
@@ -103,6 +109,9 @@ export const useChartData = ({
         } else {
           formattedData = ensureUniqueTimestamps<CandlestickData<Time>>(formattedData as CandlestickData<Time>[]);
         }
+        
+        // Log volume data to verify it's being included
+        console.log('Formatted first candle with volume:', formattedData[0]);
         
         setCandles(formattedData);
         processedCandleTimesRef.current = new Set();
@@ -133,7 +142,7 @@ export const useChartData = ({
       return;
     }
     
-    console.log(`Processing new candle: time=${new Date(timeValue * 1000).toLocaleTimeString()}, open=${candle.open}, close=${candle.close}`);
+    console.log(`Processing new candle: time=${new Date(timeValue * 1000).toLocaleTimeString()}, open=${candle.open}, close=${candle.close}, volume=${candle.tick_volume || 0}`);
     
     setCandles(prevCandles => {
       if (!prevCandles || prevCandles.length === 0) return prevCandles;
@@ -144,7 +153,10 @@ export const useChartData = ({
         
         const lineCandle: LineData<Time> = {
           time: timeValue as Time,
-          value: candle.close
+          value: candle.close,
+          // Preserve volume data
+          tick_volume: candle.tick_volume || candle.volume || 0,
+          volume: candle.tick_volume || candle.volume || 0
         };
         
         let updatedCandles: LineData<Time>[];
@@ -166,7 +178,10 @@ export const useChartData = ({
           open: candle.open,
           high: candle.high,
           low: candle.low,
-          close: candle.close
+          close: candle.close,
+          // Preserve volume data
+          tick_volume: candle.tick_volume || candle.volume || 0,
+          volume: candle.tick_volume || candle.volume || 0
         };
         
         let updatedCandles: CandlestickData<Time>[];
@@ -223,6 +238,8 @@ export const useChartData = ({
         lastCandle.high = Math.max(lastCandle.high, price);
         lastCandle.low = Math.min(lastCandle.low, price);
         lastCandle.close = price;
+        // Preserve volume data
+        lastCandle.volume = lastCandle.volume || lastCandle.tick_volume || 0;
         
         return [
           ...candlestickCandles.slice(0, -1),
@@ -243,7 +260,7 @@ export const useChartData = ({
     // Only process if this is a new candle time
     if (!processedCandleTimesRef.current.has(timeValue)) {
       console.log('Processing latestCandle prop:', 
-        `time=${new Date(timeValue * 1000).toLocaleTimeString()}, open=${latestCandle.open}, close=${latestCandle.close}`);
+        `time=${new Date(timeValue * 1000).toLocaleTimeString()}, open=${latestCandle.open}, close=${latestCandle.close}, volume=${latestCandle.tick_volume || 0}`);
       updateLatestCandle(latestCandle);
     }
   }, [latestCandle, updateLatestCandle]);

@@ -57,10 +57,12 @@ const ChartContainer: React.FC<ChartContainerProps> = ({
         const change = candleData.close - prevClose;
         const changePercent = (change / prevClose) * 100;
         
-        // Get volume from the original candle data if available
-        const volumeData = candles.length > 0 ? 
-          (candles[candles.length - 1] as any).tick_volume || 
-          (candles[candles.length - 1] as any).volume || 0 : 0;
+        // Extract volume specifically from tick_volume property first
+        const volumeData = 
+          (latestCandle as any).tick_volume || 
+          (latestCandle as any).volume || 0;
+        
+        console.log('OHLC Volume data:', volumeData);
         
         setOhlcData({
           open: candleData.open,
@@ -80,10 +82,10 @@ const ChartContainer: React.FC<ChartContainerProps> = ({
         const change = lineData.value - prevValue;
         const changePercent = (change / prevValue) * 100;
         
-        // Get volume from the original candle data if available
-        const volumeData = candles.length > 0 ? 
-          (candles[candles.length - 1] as any).tick_volume || 
-          (candles[candles.length - 1] as any).volume || 0 : 0;
+        // Extract volume specifically from tick_volume property first
+        const volumeData = 
+          (latestCandle as any).tick_volume || 
+          (latestCandle as any).volume || 0;
         
         setOhlcData({
           open: lineData.value,
@@ -198,13 +200,11 @@ const ChartContainer: React.FC<ChartContainerProps> = ({
               <span className="text-muted-foreground">C</span>
               <span className="text-foreground font-medium ml-1">{ohlcData.close.toFixed(2)}</span>
             </div>
-            {/* Volume display */}
-            {ohlcData.volume !== undefined && (
-              <div className="flex items-center">
-                <Volume className="h-3.5 w-3.5 text-muted-foreground mr-0.5" />
-                <span className="text-foreground font-medium">{ohlcData.volume.toLocaleString()}</span>
-              </div>
-            )}
+            {/* Volume display - always show volume data */}
+            <div className="flex items-center">
+              <Volume className="h-3.5 w-3.5 text-muted-foreground mr-0.5" />
+              <span className="text-foreground font-medium">{ohlcData.volume !== undefined ? ohlcData.volume.toLocaleString() : '0'}</span>
+            </div>
           </div>
           <div className="flex items-center gap-2">
             <div className={`${ohlcData.change >= 0 ? 'text-trading-up' : 'text-trading-down'} font-medium`}>

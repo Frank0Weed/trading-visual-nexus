@@ -1,4 +1,3 @@
-
 import { useState, useEffect, useCallback, useRef } from 'react';
 import useWebSocket, { ReadyState } from 'react-use-websocket';
 import { getWebSocketUrl, PriceData, CandleData } from '../services/apiService';
@@ -19,7 +18,7 @@ interface MarketDataFeedResult {
   newCandleEvents: Record<string, Record<string, number>>; // symbol -> timeframe -> timestamp
 }
 
-// Improved helper function to calculate candle start time for a given timestamp and timeframe
+// Helper function to calculate candle start time for a given timestamp and timeframe
 const getCandleStartTime = (timestamp: number, timeframe: string): number => {
   const timeframeMinutes: Record<string, number> = {
     'M1': 1,
@@ -42,15 +41,14 @@ const getCandleStartTime = (timestamp: number, timeframe: string): number => {
   return alignedMs / 1000;
 };
 
-// Helper to detect if this is a new candle based on previous candle time
-const isNewCandle = (currentTime: number, previousTime: number | undefined, timeframe: string): boolean => {
-  if (!previousTime) return true; // First candle is always "new"
+// Improved helper to detect if this is a NEW candle period
+const isNewCandlePeriod = (currentTime: number, previousStartTime: number | undefined, timeframe: string): boolean => {
+  if (!previousStartTime) return true; // First candle is always "new"
   
   const currentCandleStart = getCandleStartTime(currentTime, timeframe);
-  const previousCandleStart = getCandleStartTime(previousTime, timeframe);
   
-  // New candle if start times are different
-  return currentCandleStart !== previousCandleStart;
+  // New candle period if the start time has changed
+  return currentCandleStart !== previousStartTime;
 };
 
 export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFeedProps): MarketDataFeedResult => {
@@ -62,8 +60,8 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
   const subscribedSymbolsRef = useRef<string>('');
   const subscribedTimeframeRef = useRef<string>('');
   const isInitializedRef = useRef<boolean>(false);
-  // Track the actual candle times (not start times) for more accurate detection
-  const lastCandleTimesRef = useRef<Record<string, Record<string, number>>>({});
+  // Track the candle START times for accurate new candle detection
+  const lastCandleStartTimesRef = useRef<Record<string, Record<string, number>>>({});
   
   const { sendMessage, lastMessage, readyState } = useWebSocket(getWebSocketUrl(), {
     shouldReconnect: () => true,
@@ -198,7 +196,10 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
           return;
         }
         
-        // Use tick_volume as primary volume source
+        // Calculate the candle start time for this period
+        const candleStartTime = getCandleStartTime(candleTime, timeframe);
+        
+        // Use tick_volume as primary volume source and ensure it's preserved
         const tickVolume = parseInt(candleData.tick_volume) || parseInt(candleData.volume) || 0;
         
         const parsedCandle: CandleData = {
@@ -214,20 +215,19 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
         };
         
         // Initialize tracking for this symbol/timeframe if needed
-        if (!lastCandleTimesRef.current[symbol]) {
-          lastCandleTimesRef.current[symbol] = {};
+        if (!lastCandleStartTimesRef.current[symbol]) {
+          lastCandleStartTimesRef.current[symbol] = {};
         }
         
-        const lastCandleTime = lastCandleTimesRef.current[symbol][timeframe];
+        const lastCandleStartTime = lastCandleStartTimesRef.current[symbol][timeframe];
         
-        // Improved new candle detection - check if this is a new candle
-        if (isNewCandle(candleTime, lastCandleTime, timeframe)) {
-          const candleStartTime = getCandleStartTime(candleTime, timeframe);
-          
-          console.log(`🕯️ NEW CANDLE DETECTED: ${symbol} ${timeframe}`);
-          console.log(`Previous candle time: ${lastCandleTime ? new Date(lastCandleTime * 1000).toLocaleTimeString() : 'None'}`);
-          console.log(`Current candle time: ${new Date(candleTime * 1000).toLocaleTimeString()}`);
+        // Check if this is a NEW candle period
+        if (isNewCandlePeriod(candleTime, lastCandleStartTime, timeframe)) {
+          console.log(`🕯️ NEW CANDLE PERIOD DETECTED: ${symbol} ${timeframe}`);
+          console.log(`Previous candle start: ${lastCandleStartTime ? new Date(lastCandleStartTime * 1000).toLocaleTimeString() : 'None'}`);
           console.log(`Current candle start: ${new Date(candleStartTime * 1000).toLocaleTimeString()}`);
+          console.log(`Current candle time: ${new Date(candleTime * 1000).toLocaleTimeString()}`);
+          console.log(`Volume: ${tickVolume}`);
           
           // Update new candle events with the new candle start time
           setNewCandleEvents(prev => ({
@@ -238,6 +238,9 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
             }
           }));
           
+          // Update the tracking with new candle start time
+          lastCandleStartTimesRef.current[symbol][timeframe] = candleStartTime;
+          
           // Toast notification for current timeframe
           if (timeframe === currentTimeframe) {
             toast.info(`🕯️ New ${timeframe} candle opened for ${symbol}`, {
@@ -246,12 +249,9 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
           }
         }
         
-        // Update last candle time tracking with actual candle time
-        lastCandleTimesRef.current[symbol][timeframe] = candleTime;
+        console.log(`Live candle update for ${symbol} ${timeframe} (Volume: ${tickVolume}):`, parsedCandle);
         
-        console.log(`Live candle update for ${symbol} ${timeframe}:`, parsedCandle);
-        
-        // Update latest candles state
+        // Update latest candles state - always update with proper volume
         setLatestCandles(prev => {
           const symbolCandles = prev[symbol] || {};
           return {
