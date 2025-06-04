@@ -19,7 +19,7 @@ interface MarketDataFeedResult {
   newCandleEvents: Record<string, Record<string, number>>; // symbol -> timeframe -> timestamp
 }
 
-// Helper function to calculate candle start time for a given timestamp and timeframe
+// Improved helper function to calculate candle start time for a given timestamp and timeframe
 const getCandleStartTime = (timestamp: number, timeframe: string): number => {
   const timeframeMinutes: Record<string, number> = {
     'M1': 1,
@@ -36,8 +36,21 @@ const getCandleStartTime = (timestamp: number, timeframe: string): number => {
   const minutes = timeframeMinutes[timeframe] || 1;
   const milliseconds = minutes * 60 * 1000;
   
-  // Convert to milliseconds, floor to candle boundary, convert back to seconds
-  return Math.floor((timestamp * 1000) / milliseconds) * milliseconds / 1000;
+  // Convert timestamp to milliseconds, align to candle boundary, convert back to seconds
+  const timestampMs = timestamp * 1000;
+  const alignedMs = Math.floor(timestampMs / milliseconds) * milliseconds;
+  return alignedMs / 1000;
+};
+
+// Helper to detect if this is a new candle based on previous candle time
+const isNewCandle = (currentTime: number, previousTime: number | undefined, timeframe: string): boolean => {
+  if (!previousTime) return true; // First candle is always "new"
+  
+  const currentCandleStart = getCandleStartTime(currentTime, timeframe);
+  const previousCandleStart = getCandleStartTime(previousTime, timeframe);
+  
+  // New candle if start times are different
+  return currentCandleStart !== previousCandleStart;
 };
 
 export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFeedProps): MarketDataFeedResult => {
@@ -49,7 +62,8 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
   const subscribedSymbolsRef = useRef<string>('');
   const subscribedTimeframeRef = useRef<string>('');
   const isInitializedRef = useRef<boolean>(false);
-  const lastCandleStartTimesRef = useRef<Record<string, Record<string, number>>>({});
+  // Track the actual candle times (not start times) for more accurate detection
+  const lastCandleTimesRef = useRef<Record<string, Record<string, number>>>({});
   
   const { sendMessage, lastMessage, readyState } = useWebSocket(getWebSocketUrl(), {
     shouldReconnect: () => true,
@@ -164,11 +178,11 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
         }
       }
       
-      // Handle candle updates - FIXED to use correct data structure
+      // Handle candle updates with improved new candle detection
       if (message.type === 'candle_update') {
         const { symbol, timeframe } = message;
         
-        // Use 'data' field from WebSocket message (not 'candle')
+        // Use 'data' field from WebSocket message
         const candleData = message.data || message.candle;
         
         if (!candleData || typeof candleData !== 'object') {
@@ -199,20 +213,20 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
           volume: tickVolume // Use tick_volume as primary volume
         };
         
-        // Calculate candle start time for this timeframe
-        const candleStartTime = getCandleStartTime(candleTime, timeframe);
-        
         // Initialize tracking for this symbol/timeframe if needed
-        if (!lastCandleStartTimesRef.current[symbol]) {
-          lastCandleStartTimesRef.current[symbol] = {};
+        if (!lastCandleTimesRef.current[symbol]) {
+          lastCandleTimesRef.current[symbol] = {};
         }
         
-        const lastCandleStartTime = lastCandleStartTimesRef.current[symbol][timeframe];
+        const lastCandleTime = lastCandleTimesRef.current[symbol][timeframe];
         
-        // Check for new candle opening by comparing candle start times
-        if (lastCandleStartTime && lastCandleStartTime !== candleStartTime) {
-          console.log(`🕯️ NEW CANDLE OPENED: ${symbol} ${timeframe}`);
-          console.log(`Previous candle start: ${new Date(lastCandleStartTime * 1000).toLocaleTimeString()}`);
+        // Improved new candle detection - check if this is a new candle
+        if (isNewCandle(candleTime, lastCandleTime, timeframe)) {
+          const candleStartTime = getCandleStartTime(candleTime, timeframe);
+          
+          console.log(`🕯️ NEW CANDLE DETECTED: ${symbol} ${timeframe}`);
+          console.log(`Previous candle time: ${lastCandleTime ? new Date(lastCandleTime * 1000).toLocaleTimeString() : 'None'}`);
+          console.log(`Current candle time: ${new Date(candleTime * 1000).toLocaleTimeString()}`);
           console.log(`Current candle start: ${new Date(candleStartTime * 1000).toLocaleTimeString()}`);
           
           // Update new candle events with the new candle start time
@@ -226,17 +240,16 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
           
           // Toast notification for current timeframe
           if (timeframe === currentTimeframe) {
-            toast.info(`New ${timeframe} candle opened for ${symbol}`, {
+            toast.info(`🕯️ New ${timeframe} candle opened for ${symbol}`, {
               duration: 3000,
             });
           }
         }
         
-        // Update last candle start time tracking
-        lastCandleStartTimesRef.current[symbol][timeframe] = candleStartTime;
+        // Update last candle time tracking with actual candle time
+        lastCandleTimesRef.current[symbol][timeframe] = candleTime;
         
         console.log(`Live candle update for ${symbol} ${timeframe}:`, parsedCandle);
-        console.log(`Candle start time: ${new Date(candleStartTime * 1000).toLocaleTimeString()}`);
         
         // Update latest candles state
         setLatestCandles(prev => {
@@ -266,7 +279,7 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
         }));
         
         if (timeframe === currentTimeframe) {
-          toast.success(`New ${timeframe} candle opened for ${symbol}`, {
+          toast.success(`🕯️ New ${timeframe} candle opened for ${symbol}`, {
             duration: 3000,
           });
         }
