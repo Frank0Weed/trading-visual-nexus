@@ -3,6 +3,8 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import useWebSocket, { ReadyState } from 'react-use-websocket';
 import { getWebSocketUrl, PriceData, CandleData } from '../services/apiService';
 import { toast } from '@/components/ui/sonner';
+import { wsOptimizer } from '@/utils/wsOptimization';
+import { dataCache } from '@/services/dataCache';
 
 interface UseMarketDataFeedProps {
   symbols: string[];
@@ -16,39 +18,44 @@ interface MarketDataFeedResult {
   readyState: ReadyState;
   sendMessage: (message: string) => void;
   lastMessageTime: number;
-  newCandleEvents: Record<string, Record<string, number>>; // symbol -> timeframe -> timestamp
+  newCandleEvents: Record<string, Record<string, number>>;
 }
 
-// Helper function to calculate candle start time for a given timestamp and timeframe
+// Optimized candle start time calculation with caching
+const candleStartTimeCache = new Map<string, number>();
+
 const getCandleStartTime = (timestamp: number, timeframe: string): number => {
+  const cacheKey = `${timestamp}-${timeframe}`;
+  
+  if (candleStartTimeCache.has(cacheKey)) {
+    return candleStartTimeCache.get(cacheKey)!;
+  }
+
   const timeframeMinutes: Record<string, number> = {
-    'M1': 1,
-    'M5': 5,
-    'M15': 15,
-    'M30': 30,
-    'H1': 60,
-    'H4': 240,
-    'D1': 1440,
-    'W1': 10080,
-    'MN1': 43200
+    'M1': 1, 'M5': 5, 'M15': 15, 'M30': 30,
+    'H1': 60, 'H4': 240, 'D1': 1440, 'W1': 10080, 'MN1': 43200
   };
 
   const minutes = timeframeMinutes[timeframe] || 1;
   const milliseconds = minutes * 60 * 1000;
-  
-  // Convert timestamp to milliseconds, align to candle boundary, convert back to seconds
   const timestampMs = timestamp * 1000;
   const alignedMs = Math.floor(timestampMs / milliseconds) * milliseconds;
-  return alignedMs / 1000;
+  const result = alignedMs / 1000;
+  
+  candleStartTimeCache.set(cacheKey, result);
+  
+  // Limit cache size
+  if (candleStartTimeCache.size > 1000) {
+    const firstKey = candleStartTimeCache.keys().next().value;
+    candleStartTimeCache.delete(firstKey);
+  }
+  
+  return result;
 };
 
-// Improved helper to detect if this is a NEW candle period
 const isNewCandlePeriod = (currentTime: number, previousStartTime: number | undefined, timeframe: string): boolean => {
-  if (!previousStartTime) return true; // First candle is always "new"
-  
+  if (!previousStartTime) return true;
   const currentCandleStart = getCandleStartTime(currentTime, timeframe);
-  
-  // New candle period if the start time has changed
   return currentCandleStart !== previousStartTime;
 };
 
@@ -61,13 +68,16 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
   const subscribedSymbolsRef = useRef<string>('');
   const subscribedTimeframeRef = useRef<string>('');
   const isInitializedRef = useRef<boolean>(false);
-  // Track the candle START times for accurate new candle detection
   const lastCandleStartTimesRef = useRef<Record<string, Record<string, number>>>({});
   
-  // Add refs to prevent duplicate processing
+  // Optimized refs with better memory management
   const lastPriceUpdateRef = useRef<Record<string, { time: number; bid: number; ask: number }>>({});
   const lastCandleUpdateRef = useRef<Record<string, Record<string, { time: number; close: number }>>>({});
   
+  // Performance optimization refs
+  const messageQueueRef = useRef<any[]>([]);
+  const processingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
   const { sendMessage, lastMessage, readyState } = useWebSocket(getWebSocketUrl(), {
     shouldReconnect: () => true,
     reconnectAttempts: 10,
@@ -96,6 +106,7 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
     [ReadyState.UNINSTANTIATED]: 'Uninstantiated',
   }[readyState];
 
+  // Optimized subscription with caching
   const subscribeToData = useCallback(() => {
     if (readyState !== ReadyState.OPEN || symbols.length === 0) return;
     
@@ -108,121 +119,119 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
     
     console.log('Subscribing to live data for symbols:', symbols);
     
-    // Subscribe to live price updates
-    sendMessage(JSON.stringify({
-      type: 'subscribe_prices',
-      symbols: symbols
-    }));
+    // Use cached subscription data if available
+    const subscriptionKey = `subscription:${symbolsKey}:${currentTimeframe}`;
     
-    // Subscribe to all timeframes for new candle detection
-    const allTimeframes = ['M1', 'M5', 'M15', 'M30', 'H1', 'H4', 'D1', 'W1', 'MN1'];
-    
-    allTimeframes.forEach(timeframe => {
+    if (!dataCache.has(subscriptionKey)) {
       sendMessage(JSON.stringify({
-        type: 'subscribe_candles',
-        symbols: symbols,
-        timeframe: timeframe
+        type: 'subscribe_prices',
+        symbols: symbols
       }));
-    });
+      
+      const allTimeframes = ['M1', 'M5', 'M15', 'M30', 'H1', 'H4', 'D1', 'W1', 'MN1'];
+      
+      allTimeframes.forEach(timeframe => {
+        sendMessage(JSON.stringify({
+          type: 'subscribe_candles',
+          symbols: symbols,
+          timeframe: timeframe
+        }));
+      });
+      
+      dataCache.set(subscriptionKey, true, 300000); // Cache for 5 minutes
+    }
     
     subscribedSymbolsRef.current = symbolsKey;
     subscribedTimeframeRef.current = currentTimeframe || '';
     isInitializedRef.current = true;
   }, [readyState, symbols, currentTimeframe, sendMessage]);
 
-  // Handle WebSocket messages with improved duplicate prevention
-  const handleMessage = useCallback((message: any) => {
-    if (!message) return;
+  // Optimized message processing with batching
+  const processMessageBatch = useCallback(() => {
+    if (messageQueueRef.current.length === 0) return;
     
-    try {
-      const parsedMessage = JSON.parse(message.data);
-      setLastMessageTime(Date.now());
-      
-      // Handle live price updates with duplicate prevention
-      if (parsedMessage.type === 'price_update') {
-        const { symbol, data } = parsedMessage;
+    const messages = [...messageQueueRef.current];
+    messageQueueRef.current = [];
+    
+    // Group messages by type for batch processing
+    const priceUpdates: any[] = [];
+    const candleUpdates: any[] = [];
+    const newCandleNotifications: any[] = [];
+    
+    messages.forEach(msg => {
+      try {
+        const parsedMessage = JSON.parse(msg.data);
         
-        if (symbol && data && data.bid && data.ask) {
-          const { time, bid, ask, spread } = data;
-          const bidNum = parseFloat(bid);
-          const askNum = parseFloat(ask);
-          const timeNum = time || Date.now() / 1000;
-          
-          // Check for duplicates
-          const lastUpdate = lastPriceUpdateRef.current[symbol];
-          const isDuplicate = lastUpdate && 
-            lastUpdate.time === timeNum && 
-            lastUpdate.bid === bidNum && 
-            lastUpdate.ask === askNum;
-          
-          if (!isDuplicate) {
-            setPrices(prev => ({
-              ...prev,
-              [symbol]: {
-                symbol,
-                time: timeNum,
-                bid: bidNum,
-                ask: askNum,
-                spread: parseFloat(spread) || Math.abs(askNum - bidNum)
-              }
-            }));
-            
-            // Update last price reference
-            lastPriceUpdateRef.current[symbol] = { time: timeNum, bid: bidNum, ask: askNum };
-          }
+        if (parsedMessage.type === 'price_update' || parsedMessage.type === 'price_tick') {
+          priceUpdates.push(parsedMessage);
+        } else if (parsedMessage.type === 'candle_update') {
+          candleUpdates.push(parsedMessage);
+        } else if (parsedMessage.type === 'new_candle_open') {
+          newCandleNotifications.push(parsedMessage);
         }
+      } catch (error) {
+        console.error('Error parsing WebSocket message:', error);
       }
+    });
+    
+    // Process price updates in batch
+    if (priceUpdates.length > 0) {
+      const latestPriceBySymbol = new Map<string, any>();
       
-      // Handle old format for backwards compatibility with duplicate prevention
-      if (parsedMessage.type === 'price_tick') {
-        const { symbol, bid, ask, time, spread } = parsedMessage;
-        
-        if (symbol && bid && ask) {
-          const bidNum = parseFloat(bid);
-          const askNum = parseFloat(ask);
-          const timeNum = time || Date.now() / 1000;
-          
-          // Check for duplicates
-          const lastUpdate = lastPriceUpdateRef.current[symbol];
-          const isDuplicate = lastUpdate && 
-            lastUpdate.time === timeNum && 
-            lastUpdate.bid === bidNum && 
-            lastUpdate.ask === askNum;
-          
-          if (!isDuplicate) {
-            setPrices(prev => ({
-              ...prev,
-              [symbol]: {
-                symbol,
-                time: timeNum,
-                bid: bidNum,
-                ask: askNum,
-                spread: parseFloat(spread) || Math.abs(askNum - bidNum)
-              }
-            }));
-            
-            lastPriceUpdateRef.current[symbol] = { time: timeNum, bid: bidNum, ask: askNum };
-          }
+      priceUpdates.forEach(msg => {
+        const symbol = msg.symbol || msg.data?.symbol;
+        if (symbol) {
+          latestPriceBySymbol.set(symbol, msg);
         }
+      });
+      
+      // Apply only the latest price for each symbol
+      const priceUpdateBatch: Record<string, PriceData> = {};
+      
+      latestPriceBySymbol.forEach((msg, symbol) => {
+        const data = msg.data || msg;
+        const { time, bid, ask, spread } = data;
+        const bidNum = parseFloat(bid);
+        const askNum = parseFloat(ask);
+        const timeNum = time || Date.now() / 1000;
+        
+        // Check for duplicates
+        const lastUpdate = lastPriceUpdateRef.current[symbol];
+        const isDuplicate = lastUpdate && 
+          lastUpdate.time === timeNum && 
+          lastUpdate.bid === bidNum && 
+          lastUpdate.ask === askNum;
+        
+        if (!isDuplicate) {
+          priceUpdateBatch[symbol] = {
+            symbol,
+            time: timeNum,
+            bid: bidNum,
+            ask: askNum,
+            spread: parseFloat(spread) || Math.abs(askNum - bidNum)
+          };
+          
+          lastPriceUpdateRef.current[symbol] = { time: timeNum, bid: bidNum, ask: askNum };
+        }
+      });
+      
+      if (Object.keys(priceUpdateBatch).length > 0) {
+        setPrices(prev => ({ ...prev, ...priceUpdateBatch }));
       }
+    }
+    
+    // Process candle updates in batch
+    if (candleUpdates.length > 0) {
+      const candleUpdateBatch: Record<string, Record<string, CandleData>> = {};
+      const newCandleEventBatch: Record<string, Record<string, number>> = {};
       
-      // Handle candle updates with improved new candle detection and duplicate prevention
-      if (parsedMessage.type === 'candle_update') {
-        const { symbol, timeframe } = parsedMessage;
+      candleUpdates.forEach(msg => {
+        const { symbol, timeframe, data: candleData } = msg;
         
-        // Use 'data' field from WebSocket message
-        const candleData = parsedMessage.data || parsedMessage.candle;
+        if (!candleData || typeof candleData !== 'object') return;
         
-        if (!candleData || typeof candleData !== 'object') {
-          return;
-        }
-        
-        // Convert candle time to number and ensure it's valid
         const candleTime = typeof candleData.time === 'string' ? parseInt(candleData.time, 10) : Number(candleData.time);
-        
-        if (isNaN(candleTime) || candleTime <= 0) {
-          return;
-        }
+        if (isNaN(candleTime) || candleTime <= 0) return;
         
         const closePrice = parseFloat(candleData.close) || 0;
         
@@ -236,14 +245,9 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
           lastCandle.time === candleTime && 
           lastCandle.close === closePrice;
         
-        if (isDuplicateCandle) {
-          return; // Skip duplicate candle updates
-        }
+        if (isDuplicateCandle) return;
         
-        // Calculate the candle start time for this period
         const candleStartTime = getCandleStartTime(candleTime, timeframe);
-        
-        // Use tick_volume as primary volume source and ensure it's preserved
         const tickVolume = parseInt(candleData.tick_volume) || parseInt(candleData.volume) || 0;
         
         const parsedCandle: CandleData = {
@@ -255,7 +259,7 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
           tick_volume: tickVolume,
           spread: parseFloat(candleData.spread) || 0,
           real_volume: parseInt(candleData.real_volume) || 0,
-          volume: tickVolume // Use tick_volume as primary volume
+          volume: tickVolume
         };
         
         // Initialize tracking for this symbol/timeframe if needed
@@ -267,65 +271,92 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
         
         // Check if this is a NEW candle period
         if (isNewCandlePeriod(candleTime, lastCandleStartTime, timeframe)) {
-          // Update new candle events with the new candle start time
-          setNewCandleEvents(prev => ({
-            ...prev,
-            [symbol]: {
-              ...prev[symbol],
-              [timeframe]: candleStartTime
-            }
-          }));
-          
-          // Update the tracking with new candle start time
-          lastCandleStartTimesRef.current[symbol][timeframe] = candleStartTime;
-          
-          // Toast notification for current timeframe only
-          if (timeframe === currentTimeframe) {
-            toast.info(`🕯️ New ${timeframe} candle opened for ${symbol}`, {
-              duration: 3000,
-            });
+          if (!newCandleEventBatch[symbol]) {
+            newCandleEventBatch[symbol] = {};
           }
+          newCandleEventBatch[symbol][timeframe] = candleStartTime;
+          lastCandleStartTimesRef.current[symbol][timeframe] = candleStartTime;
         }
         
-        // Update latest candles state - always update with proper volume
+        // Prepare candle update
+        if (!candleUpdateBatch[symbol]) {
+          candleUpdateBatch[symbol] = {};
+        }
+        candleUpdateBatch[symbol][timeframe] = parsedCandle;
+        
+        lastCandleUpdateRef.current[symbol][timeframe] = { time: candleTime, close: closePrice };
+      });
+      
+      // Apply all candle updates at once
+      if (Object.keys(candleUpdateBatch).length > 0) {
         setLatestCandles(prev => {
-          const symbolCandles = prev[symbol] || {};
-          return {
-            ...prev,
-            [symbol]: {
-              ...symbolCandles,
-              [timeframe]: parsedCandle
-            }
-          };
+          const newState = { ...prev };
+          Object.entries(candleUpdateBatch).forEach(([symbol, symbolCandles]) => {
+            newState[symbol] = { ...newState[symbol], ...symbolCandles };
+          });
+          return newState;
+        });
+      }
+      
+      // Apply new candle events
+      if (Object.keys(newCandleEventBatch).length > 0) {
+        setNewCandleEvents(prev => {
+          const newState = { ...prev };
+          Object.entries(newCandleEventBatch).forEach(([symbol, symbolEvents]) => {
+            newState[symbol] = { ...newState[symbol], ...symbolEvents };
+          });
+          return newState;
         });
         
-        // Update last candle reference
-        lastCandleUpdateRef.current[symbol][timeframe] = { time: candleTime, close: closePrice };
-      }
-
-      // Handle server-side new candle notifications
-      if (parsedMessage.type === 'new_candle_open') {
-        const { symbol, timeframe, time } = parsedMessage;
-        
-        setNewCandleEvents(prev => ({
-          ...prev,
-          [symbol]: {
-            ...prev[symbol],
-            [timeframe]: time
-          }
-        }));
-        
-        if (timeframe === currentTimeframe) {
-          toast.success(`🕯️ New ${timeframe} candle opened for ${symbol}`, {
-            duration: 3000,
+        // Show notifications for current timeframe
+        Object.entries(newCandleEventBatch).forEach(([symbol, symbolEvents]) => {
+          Object.keys(symbolEvents).forEach(timeframe => {
+            if (timeframe === currentTimeframe) {
+              toast.info(`🕯️ New ${timeframe} candle opened for ${symbol}`, { duration: 3000 });
+            }
           });
-        }
+        });
       }
-
-    } catch (error) {
-      console.error('Error parsing WebSocket message:', error);
     }
+    
+    // Process new candle notifications
+    newCandleNotifications.forEach(msg => {
+      const { symbol, timeframe, time } = msg;
+      
+      setNewCandleEvents(prev => ({
+        ...prev,
+        [symbol]: {
+          ...prev[symbol],
+          [timeframe]: time
+        }
+      }));
+      
+      if (timeframe === currentTimeframe) {
+        toast.success(`🕯️ New ${timeframe} candle opened for ${symbol}`, { duration: 3000 });
+      }
+    });
+    
   }, [currentTimeframe]);
+
+  // Optimized message handling with queueing
+  const handleMessage = useCallback((message: any) => {
+    if (!message) return;
+    
+    setLastMessageTime(Date.now());
+    
+    // Add message to queue
+    messageQueueRef.current.push(message);
+    
+    // Schedule batch processing
+    if (processingTimeoutRef.current) {
+      clearTimeout(processingTimeoutRef.current);
+    }
+    
+    processingTimeoutRef.current = setTimeout(() => {
+      processMessageBatch();
+    }, 16); // ~60fps
+    
+  }, [processMessageBatch]);
 
   // Handle WebSocket messages
   useEffect(() => {
@@ -334,14 +365,14 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
     }
   }, [lastMessage, handleMessage]);
 
-  // Subscribe when connection opens - stable dependency array
+  // Subscribe when connection opens
   useEffect(() => {
     if (readyState === ReadyState.OPEN) {
       subscribeToData();
     }
   }, [readyState, subscribeToData]);
 
-  // Heartbeat to maintain connection - reduce frequency
+  // Optimized heartbeat with reduced frequency
   useEffect(() => {
     if (readyState !== ReadyState.OPEN) return;
     
@@ -352,10 +383,20 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
       if (now - lastMessageTime > 30000) {
         console.warn('No messages received in 30 seconds');
       }
-    }, 15000);
+    }, 30000); // Reduced to every 30 seconds
     
     return () => clearInterval(heartbeatInterval);
   }, [readyState, sendMessage, lastMessageTime]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (processingTimeoutRef.current) {
+        clearTimeout(processingTimeoutRef.current);
+      }
+      wsOptimizer.cleanup();
+    };
+  }, []);
 
   return { 
     prices, 

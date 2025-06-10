@@ -1,5 +1,5 @@
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { toast } from '@/components/ui/sonner';
 import { 
   fetchCandles,
@@ -8,6 +8,7 @@ import {
 } from '../services/apiService';
 import { CandlestickData, LineData, Time } from 'lightweight-charts';
 import { ChartType } from '@/components/Chart';
+import { dataCache } from '@/services/dataCache';
 
 interface UseChartDataProps {
   selectedSymbol: string;
@@ -23,7 +24,7 @@ interface ChartDataResult {
   updateLatestPrice: (price: number) => void;
 }
 
-// Helper function to format candle data to match Chart component requirements - with proper volume
+// Optimized formatting with memoization
 const formatCandleData = (candles: CandleData[], chartType: ChartType): CandlestickData<Time>[] | LineData<Time>[] => {
   if (chartType === 'line' || chartType === 'area') {
     return candles.map(candle => {
@@ -36,6 +37,7 @@ const formatCandleData = (candles: CandleData[], chartType: ChartType): Candlest
       return {
         time: timeValue as Time,
         value: candle.close,
+        volume: tickVolume,
         customValues: {
           tick_volume: tickVolume,
           volume: tickVolume
@@ -56,6 +58,7 @@ const formatCandleData = (candles: CandleData[], chartType: ChartType): Candlest
         high: candle.high,
         low: candle.low,
         close: candle.close,
+        volume: tickVolume,
         customValues: {
           tick_volume: tickVolume,
           volume: tickVolume
@@ -65,17 +68,20 @@ const formatCandleData = (candles: CandleData[], chartType: ChartType): Candlest
   }
 };
 
-// Helper to ensure time values are unique and properly sorted with volume preserved
+// Optimized unique timestamps function with better performance
 function ensureUniqueTimestamps<T extends {time: Time}>(data: T[]): T[] {
+  if (data.length === 0) return data;
+  
   const uniqueTimeMap = new Map<number, T>();
   
-  data.forEach(item => {
+  for (let i = 0; i < data.length; i++) {
+    const item = data[i];
     const numericTime = Number(item.time);
     uniqueTimeMap.set(numericTime, {
       ...item,
       time: numericTime as Time
     });
-  });
+  }
   
   return Array.from(uniqueTimeMap.values())
     .sort((a, b) => Number(a.time) - Number(b.time));
@@ -90,25 +96,41 @@ export const useChartData = ({
   const [candles, setCandles] = useState<CandlestickData<Time>[] | LineData<Time>[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   
-  // Use refs to prevent unnecessary updates
+  // Optimized refs
   const lastUpdateTimeRef = useRef<number>(0);
   const processedCandleTimesRef = useRef<Set<number>>(new Set());
   const lastSymbolTimeframeRef = useRef<string>('');
+  const dataVersionRef = useRef<number>(0);
 
-  // Fetch candles when symbol or timeframe changes
+  // Memoize cache key
+  const cacheKey = useMemo(() => 
+    dataCache.candleKey(selectedSymbol, selectedTimeframe, 500), 
+    [selectedSymbol, selectedTimeframe]
+  );
+
+  // Optimized candle fetching with caching
   useEffect(() => {
     const symbolTimeframeKey = `${selectedSymbol}-${selectedTimeframe}`;
     
-    // Only fetch if symbol or timeframe actually changed
     if (symbolTimeframeKey === lastSymbolTimeframeRef.current) return;
     
     const loadCandles = async () => {
       try {
         setIsLoading(true);
+        
+        // Check cache first
+        const cachedData = dataCache.get<CandlestickData<Time>[] | LineData<Time>[]>(cacheKey);
+        if (cachedData && cachedData.length > 0) {
+          console.log(`Using cached candles for ${selectedSymbol} ${selectedTimeframe}`);
+          setCandles(cachedData);
+          setIsLoading(false);
+          dataVersionRef.current++;
+          return;
+        }
+        
         console.log(`Fetching candles for ${selectedSymbol} ${selectedTimeframe}`);
         const data = await fetchCandles(selectedSymbol, selectedTimeframe, 500);
         
-        // Ensure volume data is preserved when formatting
         let formattedData = formatCandleData(data, chartType);
         
         if (chartType === 'line' || chartType === 'area') {
@@ -117,12 +139,13 @@ export const useChartData = ({
           formattedData = ensureUniqueTimestamps<CandlestickData<Time>>(formattedData as CandlestickData<Time>[]);
         }
         
-        // Log volume data to verify it's being included
-        console.log('Formatted first candle with volume:', formattedData[0]);
+        // Cache the formatted data
+        dataCache.set(cacheKey, formattedData, 60000); // Cache for 1 minute
         
         setCandles(formattedData);
         processedCandleTimesRef.current = new Set();
         lastSymbolTimeframeRef.current = symbolTimeframeKey;
+        dataVersionRef.current++;
         setIsLoading(false);
       } catch (error) {
         console.error(`Error fetching candles for ${selectedSymbol} ${selectedTimeframe}:`, error);
@@ -134,9 +157,9 @@ export const useChartData = ({
     if (selectedSymbol && selectedTimeframe) {
       loadCandles();
     }
-  }, [selectedSymbol, selectedTimeframe, chartType]);
+  }, [selectedSymbol, selectedTimeframe, chartType, cacheKey]);
 
-  // Update the latest candle when new data arrives
+  // Optimized candle update with better performance
   const updateLatestCandle = useCallback((candle: CandleData) => {
     if (!candle) return;
     
@@ -149,127 +172,110 @@ export const useChartData = ({
       return;
     }
     
-    console.log(`Processing new candle: time=${new Date(timeValue * 1000).toLocaleTimeString()}, open=${candle.open}, close=${candle.close}, volume=${candle.tick_volume || 0}`);
+    const tickVolume = candle.tick_volume || candle.volume || 0;
     
     setCandles(prevCandles => {
       if (!prevCandles || prevCandles.length === 0) return prevCandles;
       
-      const tickVolume = candle.tick_volume || candle.volume || 0;
+      const newCandles = [...prevCandles];
+      let candleIndex = -1;
+      
+      // Optimized search from the end (most likely position)
+      for (let i = newCandles.length - 1; i >= Math.max(0, newCandles.length - 10); i--) {
+        if (Number(newCandles[i].time) === timeValue) {
+          candleIndex = i;
+          break;
+        }
+      }
       
       if (chartType === 'line' || chartType === 'area') {
-        const lineCandles = [...prevCandles] as LineData<Time>[];
-        const candleIndex = lineCandles.findIndex(c => Number(c.time) === timeValue);
-        
         const lineCandle: LineData<Time> = {
           time: timeValue as Time,
           value: candle.close,
+          volume: tickVolume,
           customValues: {
             tick_volume: tickVolume,
             volume: tickVolume
           }
         };
         
-        let updatedCandles: LineData<Time>[];
-        
         if (candleIndex >= 0) {
-          updatedCandles = [...lineCandles];
-          updatedCandles[candleIndex] = lineCandle;
+          newCandles[candleIndex] = lineCandle;
         } else {
-          updatedCandles = [...lineCandles, lineCandle];
+          newCandles.push(lineCandle);
         }
-        
-        return ensureUniqueTimestamps(updatedCandles);
       } else {
-        const candlestickCandles = [...prevCandles] as CandlestickData<Time>[];
-        const candleIndex = candlestickCandles.findIndex(c => Number(c.time) === timeValue);
-        
         const candlestickData: CandlestickData<Time> = {
           time: timeValue as Time,
           open: candle.open,
           high: candle.high,
           low: candle.low,
           close: candle.close,
+          volume: tickVolume,
           customValues: {
             tick_volume: tickVolume,
             volume: tickVolume
           }
         };
         
-        let updatedCandles: CandlestickData<Time>[];
-        
         if (candleIndex >= 0) {
-          updatedCandles = [...candlestickCandles];
-          updatedCandles[candleIndex] = candlestickData;
+          newCandles[candleIndex] = candlestickData;
         } else {
-          updatedCandles = [...candlestickCandles, candlestickData];
+          newCandles.push(candlestickData);
         }
-        
-        return ensureUniqueTimestamps(updatedCandles);
       }
+      
+      // Only sort if we added a new candle (performance optimization)
+      if (candleIndex < 0) {
+        return ensureUniqueTimestamps(newCandles);
+      }
+      
+      return newCandles;
     });
     
-    // Mark this candle as processed
     processedCandleTimesRef.current.add(timeValue);
   }, [chartType]);
   
-  // Update just the latest price (for real-time updates)
+  // Optimized price update with better throttling
   const updateLatestPrice = useCallback((price: number) => {
     if (candles.length === 0) return;
     
-    // Rate limit updates
     const now = Date.now();
-    if (now - lastUpdateTimeRef.current < 200) return;
+    if (now - lastUpdateTimeRef.current < 100) return; // 100ms throttle
     lastUpdateTimeRef.current = now;
     
-    if (chartType === 'line' || chartType === 'area') {
-      setCandles(prevCandles => {
-        if (!prevCandles || prevCandles.length === 0) return prevCandles;
+    setCandles(prevCandles => {
+      if (!prevCandles || prevCandles.length === 0) return prevCandles;
+      
+      const newCandles = [...prevCandles];
+      const lastCandle = { ...newCandles[newCandles.length - 1] };
+      
+      if (chartType === 'line' || chartType === 'area') {
+        if ((lastCandle as LineData<Time>).value === price) return prevCandles;
+        (lastCandle as LineData<Time>).value = price;
+      } else {
+        const candleData = lastCandle as CandlestickData<Time>;
+        if (candleData.close === price) return prevCandles;
         
-        const lineCandles = [...prevCandles] as LineData<Time>[];
-        const lastCandle = { ...lineCandles[lineCandles.length - 1] };
+        candleData.high = Math.max(candleData.high, price);
+        candleData.low = Math.min(candleData.low, price);
+        candleData.close = price;
         
-        if (lastCandle.value === price) return lineCandles;
-        
-        lastCandle.value = price;
-        
-        return [
-          ...lineCandles.slice(0, -1),
-          lastCandle
-        ];
-      });
-    } else {
-      setCandles(prevCandles => {
-        if (!prevCandles || prevCandles.length === 0) return prevCandles;
-        
-        const candlestickCandles = [...prevCandles] as CandlestickData<Time>[];
-        const lastCandle = { ...candlestickCandles[candlestickCandles.length - 1] };
-        
-        if (lastCandle.close === price) return candlestickCandles;
-        
-        lastCandle.high = Math.max(lastCandle.high, price);
-        lastCandle.low = Math.min(lastCandle.low, price);
-        lastCandle.close = price;
-        
-        // Preserve volume data from customValues with proper type casting
-        const existingTickVolume = lastCandle.customValues?.tick_volume;
-        const existingVolume = lastCandle.customValues?.volume;
-        const volumeValue = Number(existingTickVolume) || Number(existingVolume) || 0;
-        
-        lastCandle.customValues = {
-          ...lastCandle.customValues,
+        // Preserve volume data
+        const volumeValue = Number(candleData.volume) || Number(candleData.customValues?.tick_volume) || 0;
+        candleData.customValues = {
+          ...candleData.customValues,
           volume: volumeValue,
           tick_volume: volumeValue
         };
-        
-        return [
-          ...candlestickCandles.slice(0, -1),
-          lastCandle
-        ];
-      });
-    }
+      }
+      
+      newCandles[newCandles.length - 1] = lastCandle;
+      return newCandles;
+    });
   }, [chartType, candles.length]);
   
-  // Update candle when latestCandle prop changes - with debouncing
+  // Optimized latest candle processing
   useEffect(() => {
     if (!latestCandle) return;
     
@@ -277,16 +283,20 @@ export const useChartData = ({
       ? parseInt(latestCandle.time, 10) 
       : Number(latestCandle.time);
       
-    // Only process if this is a new candle time
     if (!processedCandleTimesRef.current.has(timeValue)) {
-      console.log('Processing latestCandle prop:', 
-        `time=${new Date(timeValue * 1000).toLocaleTimeString()}, open=${latestCandle.open}, close=${latestCandle.close}, volume=${latestCandle.tick_volume || 0}`);
       updateLatestCandle(latestCandle);
     }
   }, [latestCandle, updateLatestCandle]);
 
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      processedCandleTimesRef.current.clear();
+    };
+  }, []);
+
   return {
-    candles: candles as CandlestickData<Time>[] | LineData<Time>[],
+    candles,
     isLoading,
     updateLatestCandle,
     updateLatestPrice
