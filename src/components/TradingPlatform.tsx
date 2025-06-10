@@ -17,18 +17,17 @@ const TradingPlatform: React.FC = () => {
   const [selectedSymbol, setSelectedSymbol] = useState<string>('XAUUSD');
   const [selectedTimeframe, setSelectedTimeframe] = useState<string>('M1');
   const [chartType, setChartType] = useState<ChartType>('candlestick');
-  const [activeIndicators, setActiveIndicators] = useState<string[]>([]);
   const [lastConnectionCheck, setLastConnectionCheck] = useState<number>(Date.now());
   const [lastTimeframeChange, setLastTimeframeChange] = useState<number>(Date.now());
 
-  // Initialize market data (only for symbols/timeframes, no prices)
+  // Initialize market data
   const { 
     symbols, 
     timeframes, 
     isLoading: isInitializing 
   } = useMarketInitialization();
 
-  // Get live market data via WebSocket (prices + candles + new candle events)
+  // Get live market data via WebSocket
   const { 
     prices, 
     latestCandles,
@@ -55,28 +54,13 @@ const TradingPlatform: React.FC = () => {
     latestCandle
   });
 
-  // Monitor new candle events and log them
+  // Monitor new candle events
   useEffect(() => {
     const currentNewCandleTime = newCandleEvents[selectedSymbol]?.[selectedTimeframe];
     if (currentNewCandleTime) {
       console.log(`📊 New ${selectedTimeframe} candle detected for ${selectedSymbol} at ${new Date(currentNewCandleTime * 1000).toLocaleString()}`);
-      
-      // You can add custom logic here for when a new candle opens
-      // For example: refresh indicators, trigger alerts, update strategies, etc.
     }
   }, [newCandleEvents, selectedSymbol, selectedTimeframe]);
-
-  // Monitor all timeframe new candle events
-  useEffect(() => {
-    const symbolNewCandles = newCandleEvents[selectedSymbol];
-    if (symbolNewCandles) {
-      Object.entries(symbolNewCandles).forEach(([timeframe, timestamp]) => {
-        if (timestamp) {
-          console.log(`🔔 All timeframes monitor: New ${timeframe} candle for ${selectedSymbol} at ${new Date(timestamp * 1000).toLocaleString()}`);
-        }
-      });
-    }
-  }, [newCandleEvents, selectedSymbol]);
 
   // Monitor connection health
   useEffect(() => {
@@ -112,17 +96,6 @@ const TradingPlatform: React.FC = () => {
     setChartType(type);
   }, []);
 
-  const handleIndicatorToggle = useCallback((indicatorId: string) => {
-    setActiveIndicators(prev => {
-      if (prev.includes(indicatorId)) {
-        return prev.filter(id => id !== indicatorId);
-      } else {
-        return [...prev, indicatorId];
-      }
-    });
-  }, []);
-
-  // Use live WebSocket prices (no API fallback)
   const isLoading = isInitializing || isLoadingChart;
   const latestPrice = prices[selectedSymbol];
 
@@ -148,8 +121,6 @@ const TradingPlatform: React.FC = () => {
         timeframe={selectedTimeframe}
         timeframes={timeframes}
         onTimeframeChange={handleTimeframeChange}
-        activeIndicators={activeIndicators}
-        onIndicatorToggle={handleIndicatorToggle}
       />
 
       <ChartContainer
@@ -158,7 +129,6 @@ const TradingPlatform: React.FC = () => {
         symbol={selectedSymbol}
         timeframe={selectedTimeframe}
         chartType={chartType}
-        activeIndicators={activeIndicators}
         latestPrice={latestPrice}
         updateLatestPrice={updateLatestPrice}
       />

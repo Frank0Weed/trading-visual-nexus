@@ -2,10 +2,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { CandlestickData, LineData, Time } from 'lightweight-charts';
 import Chart, { ChartType } from '../Chart';
-import { PriceData, CandleData } from '@/services/apiService';
-import { Card } from '@/components/ui/card';
-import { ChartContainer as UIChartContainer } from '@/components/ui/chart';
-import { BarChart, LineChart, Volume } from 'lucide-react';
+import { PriceData } from '@/services/apiService';
+import { Volume } from 'lucide-react';
 
 interface ChartContainerProps {
   isLoading: boolean;
@@ -13,7 +11,6 @@ interface ChartContainerProps {
   symbol: string;
   timeframe: string;
   chartType: ChartType;
-  activeIndicators: string[];
   latestPrice?: PriceData;
   updateLatestPrice?: (price: number) => void;
 }
@@ -24,16 +21,13 @@ const ChartContainer: React.FC<ChartContainerProps> = ({
   symbol,
   timeframe,
   chartType,
-  activeIndicators,
   latestPrice,
   updateLatestPrice
 }) => {
-  // Use a ref to track the previous price for comparison
   const prevPriceRef = useRef<number | null>(null);
   const lastUpdateTimeRef = useRef<number>(0);
   const priceUpdateIntervalRef = useRef<NodeJS.Timeout | null>(null);
   
-  // State to track the latest OHLC data
   const [ohlcData, setOhlcData] = useState<{
     open: number;
     high: number;
@@ -57,12 +51,9 @@ const ChartContainer: React.FC<ChartContainerProps> = ({
         const change = candleData.close - prevClose;
         const changePercent = (change / prevClose) * 100;
         
-        // Extract volume specifically from tick_volume property first
         const volumeData = 
           (latestCandle as any).tick_volume || 
           (latestCandle as any).volume || 0;
-        
-        console.log('OHLC Volume data:', volumeData);
         
         setOhlcData({
           open: candleData.open,
@@ -82,7 +73,6 @@ const ChartContainer: React.FC<ChartContainerProps> = ({
         const change = lineData.value - prevValue;
         const changePercent = (change / prevValue) * 100;
         
-        // Extract volume specifically from tick_volume property first
         const volumeData = 
           (latestCandle as any).tick_volume || 
           (latestCandle as any).volume || 0;
@@ -104,31 +94,26 @@ const ChartContainer: React.FC<ChartContainerProps> = ({
   useEffect(() => {
     if (!latestPrice || !updateLatestPrice) return;
     
-    // Clear any existing interval
     if (priceUpdateIntervalRef.current) {
       clearInterval(priceUpdateIntervalRef.current);
     }
     
-    // Update immediately on first render
     const currentPrice = latestPrice.bid;
     if (updateLatestPrice && currentPrice !== prevPriceRef.current) {
       updateLatestPrice(currentPrice);
       prevPriceRef.current = currentPrice;
     }
     
-    // Set up interval for regular updates
     priceUpdateIntervalRef.current = setInterval(() => {
       if (latestPrice && updateLatestPrice) {
         const currentPrice = latestPrice.bid;
         const currentTime = Date.now();
         
-        // Only update if price has changed or it's been 250ms since last update
         if (currentPrice !== prevPriceRef.current || currentTime - lastUpdateTimeRef.current > 250) {
           updateLatestPrice(currentPrice);
           prevPriceRef.current = currentPrice;
           lastUpdateTimeRef.current = currentTime;
           
-          // Update OHLC display for current candle if we have data
           if (ohlcData) {
             setOhlcData(prev => {
               if (!prev) return prev;
@@ -150,7 +135,7 @@ const ChartContainer: React.FC<ChartContainerProps> = ({
           }
         }
       }
-    }, 250); // Update every 250ms at most
+    }, 250);
     
     return () => {
       if (priceUpdateIntervalRef.current) {
@@ -159,28 +144,8 @@ const ChartContainer: React.FC<ChartContainerProps> = ({
     };
   }, [latestPrice, updateLatestPrice, ohlcData]);
 
-  // Determine chart height based on active indicators
-  const getChartHeight = () => {
-    // Base height for the chart
-    const baseHeight = 500;
-    
-    // If no indicators requiring separate windows, return base height
-    if (!activeIndicators.some(id => ['rsi', 'macd', 'adx'].includes(id))) {
-      return baseHeight;
-    }
-    
-    // Add extra height for each indicator that requires a separate pane
-    let extraHeight = 0;
-    if (activeIndicators.includes('rsi')) extraHeight += 150;
-    if (activeIndicators.includes('macd')) extraHeight += 150;
-    if (activeIndicators.includes('adx')) extraHeight += 150;
-    
-    return baseHeight + extraHeight;
-  };
-
   return (
     <div className="flex-1 p-0 relative rounded-lg border border-border bg-trading-bg-dark overflow-hidden">
-      {/* Improved OHLC data bar at the top of chart */}
       {ohlcData && !isLoading && (
         <div className="flex items-center justify-between px-3 py-1.5 bg-sidebar-secondary border-b border-border z-20 text-xs font-mono">
           <div className="flex items-center gap-3">
@@ -200,7 +165,6 @@ const ChartContainer: React.FC<ChartContainerProps> = ({
               <span className="text-muted-foreground">C</span>
               <span className="text-foreground font-medium ml-1">{ohlcData.close.toFixed(2)}</span>
             </div>
-            {/* Volume display - always show volume data */}
             <div className="flex items-center">
               <Volume className="h-3.5 w-3.5 text-muted-foreground mr-0.5" />
               <span className="text-foreground font-medium">{ohlcData.volume !== undefined ? ohlcData.volume.toLocaleString() : '0'}</span>
@@ -229,13 +193,11 @@ const ChartContainer: React.FC<ChartContainerProps> = ({
           symbol={symbol}
           timeframe={timeframe}
           chartType={chartType}
-          height={getChartHeight()} // Dynamic height based on active indicators
+          height={500}
           className="w-full"
-          activeIndicators={activeIndicators}
         />
       )}
       
-      {/* Latest price ticker - shown as a small pill instead of a card */}
       {latestPrice && !isLoading && (
         <div 
           className={`absolute top-8 right-2 text-xs font-medium py-0.5 px-2 rounded z-20 transition-colors duration-200 ${
