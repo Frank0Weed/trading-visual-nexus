@@ -81,13 +81,13 @@ const Chart: React.FC<ChartProps> = React.memo(({
     crosshair: {
       mode: CrosshairMode.Normal,
       vertLine: {
-        width: 1,
+        width: 1 as const,
         color: '#aaa',
         style: LineStyle.Solid,
         labelBackgroundColor: '#5d606b'
       },
       horzLine: {
-        width: 1,
+        width: 1 as const,
         color: '#aaa',
         style: LineStyle.Solid,
         labelBackgroundColor: '#5d606b'
@@ -122,7 +122,7 @@ const Chart: React.FC<ChartProps> = React.memo(({
       const color = candle.close >= candle.open ? 'rgba(38, 166, 154, 0.5)' : 'rgba(239, 83, 80, 0.5)';
       return {
         time: candle.time,
-        value: candle.volume || 0,
+        value: candle.customValues?.volume || candle.customValues?.tick_volume || 0,
         color
       };
     });

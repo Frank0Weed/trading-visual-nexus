@@ -8,7 +8,7 @@ import {
 } from '../services/apiService';
 import { CandlestickData, LineData, Time } from 'lightweight-charts';
 import { ChartType } from '@/components/Chart';
-import { dataCache } from '@/services/dataCache';
+import { DataCache } from '@/services/dataCache';
 
 interface UseChartDataProps {
   selectedSymbol: string;
@@ -24,8 +24,23 @@ interface ChartDataResult {
   updateLatestPrice: (price: number) => void;
 }
 
+// Extended types for volume support
+interface ExtendedCandlestickData extends CandlestickData<Time> {
+  customValues?: {
+    tick_volume?: number;
+    volume?: number;
+  };
+}
+
+interface ExtendedLineData extends LineData<Time> {
+  customValues?: {
+    tick_volume?: number;
+    volume?: number;
+  };
+}
+
 // Optimized formatting with memoization
-const formatCandleData = (candles: CandleData[], chartType: ChartType): CandlestickData<Time>[] | LineData<Time>[] => {
+const formatCandleData = (candles: CandleData[], chartType: ChartType): ExtendedCandlestickData[] | ExtendedLineData[] => {
   if (chartType === 'line' || chartType === 'area') {
     return candles.map(candle => {
       const timeValue = typeof candle.time === 'string' 
@@ -37,12 +52,11 @@ const formatCandleData = (candles: CandleData[], chartType: ChartType): Candlest
       return {
         time: timeValue as Time,
         value: candle.close,
-        volume: tickVolume,
         customValues: {
           tick_volume: tickVolume,
           volume: tickVolume
         }
-      } as LineData<Time>;
+      } as ExtendedLineData;
     });
   } else {
     return candles.map(candle => {
@@ -58,12 +72,11 @@ const formatCandleData = (candles: CandleData[], chartType: ChartType): Candlest
         high: candle.high,
         low: candle.low,
         close: candle.close,
-        volume: tickVolume,
         customValues: {
           tick_volume: tickVolume,
           volume: tickVolume
         }
-      } as CandlestickData<Time>;
+      } as ExtendedCandlestickData;
     });
   }
 };
@@ -93,7 +106,7 @@ export const useChartData = ({
   chartType,
   latestCandle
 }: UseChartDataProps): ChartDataResult => {
-  const [candles, setCandles] = useState<CandlestickData<Time>[] | LineData<Time>[]>([]);
+  const [candles, setCandles] = useState<ExtendedCandlestickData[] | ExtendedLineData[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   
   // Optimized refs
@@ -101,10 +114,11 @@ export const useChartData = ({
   const processedCandleTimesRef = useRef<Set<number>>(new Set());
   const lastSymbolTimeframeRef = useRef<string>('');
   const dataVersionRef = useRef<number>(0);
+  const dataCacheRef = useRef<DataCache>(new DataCache());
 
-  // Memoize cache key
+  // Memoize cache key using static method
   const cacheKey = useMemo(() => 
-    dataCache.candleKey(selectedSymbol, selectedTimeframe, 500), 
+    DataCache.candleKey(selectedSymbol, selectedTimeframe, 500), 
     [selectedSymbol, selectedTimeframe]
   );
 
@@ -119,7 +133,7 @@ export const useChartData = ({
         setIsLoading(true);
         
         // Check cache first
-        const cachedData = dataCache.get<CandlestickData<Time>[] | LineData<Time>[]>(cacheKey);
+        const cachedData = dataCacheRef.current.get<ExtendedCandlestickData[] | ExtendedLineData[]>(cacheKey);
         if (cachedData && cachedData.length > 0) {
           console.log(`Using cached candles for ${selectedSymbol} ${selectedTimeframe}`);
           setCandles(cachedData);
@@ -134,13 +148,13 @@ export const useChartData = ({
         let formattedData = formatCandleData(data, chartType);
         
         if (chartType === 'line' || chartType === 'area') {
-          formattedData = ensureUniqueTimestamps<LineData<Time>>(formattedData as LineData<Time>[]);
+          formattedData = ensureUniqueTimestamps<ExtendedLineData>(formattedData as ExtendedLineData[]);
         } else {
-          formattedData = ensureUniqueTimestamps<CandlestickData<Time>>(formattedData as CandlestickData<Time>[]);
+          formattedData = ensureUniqueTimestamps<ExtendedCandlestickData>(formattedData as ExtendedCandlestickData[]);
         }
         
         // Cache the formatted data
-        dataCache.set(cacheKey, formattedData, 60000); // Cache for 1 minute
+        dataCacheRef.current.set(cacheKey, formattedData, 60000); // Cache for 1 minute
         
         setCandles(formattedData);
         processedCandleTimesRef.current = new Set();
@@ -174,25 +188,24 @@ export const useChartData = ({
     
     const tickVolume = candle.tick_volume || candle.volume || 0;
     
-    setCandles(prevCandles => {
-      if (!prevCandles || prevCandles.length === 0) return prevCandles;
-      
-      const newCandles = [...prevCandles];
-      let candleIndex = -1;
-      
-      // Optimized search from the end (most likely position)
-      for (let i = newCandles.length - 1; i >= Math.max(0, newCandles.length - 10); i--) {
-        if (Number(newCandles[i].time) === timeValue) {
-          candleIndex = i;
-          break;
+    if (chartType === 'line' || chartType === 'area') {
+      setCandles(prevCandles => {
+        if (!prevCandles || prevCandles.length === 0) return prevCandles;
+        
+        const newCandles = [...(prevCandles as ExtendedLineData[])];
+        let candleIndex = -1;
+        
+        // Optimized search from the end (most likely position)
+        for (let i = newCandles.length - 1; i >= Math.max(0, newCandles.length - 10); i--) {
+          if (Number(newCandles[i].time) === timeValue) {
+            candleIndex = i;
+            break;
+          }
         }
-      }
-      
-      if (chartType === 'line' || chartType === 'area') {
-        const lineCandle: LineData<Time> = {
+        
+        const lineCandle: ExtendedLineData = {
           time: timeValue as Time,
           value: candle.close,
-          volume: tickVolume,
           customValues: {
             tick_volume: tickVolume,
             volume: tickVolume
@@ -204,14 +217,35 @@ export const useChartData = ({
         } else {
           newCandles.push(lineCandle);
         }
-      } else {
-        const candlestickData: CandlestickData<Time> = {
+        
+        // Only sort if we added a new candle (performance optimization)
+        if (candleIndex < 0) {
+          return ensureUniqueTimestamps(newCandles);
+        }
+        
+        return newCandles;
+      });
+    } else {
+      setCandles(prevCandles => {
+        if (!prevCandles || prevCandles.length === 0) return prevCandles;
+        
+        const newCandles = [...(prevCandles as ExtendedCandlestickData[])];
+        let candleIndex = -1;
+        
+        // Optimized search from the end (most likely position)
+        for (let i = newCandles.length - 1; i >= Math.max(0, newCandles.length - 10); i--) {
+          if (Number(newCandles[i].time) === timeValue) {
+            candleIndex = i;
+            break;
+          }
+        }
+        
+        const candlestickData: ExtendedCandlestickData = {
           time: timeValue as Time,
           open: candle.open,
           high: candle.high,
           low: candle.low,
           close: candle.close,
-          volume: tickVolume,
           customValues: {
             tick_volume: tickVolume,
             volume: tickVolume
@@ -223,15 +257,15 @@ export const useChartData = ({
         } else {
           newCandles.push(candlestickData);
         }
-      }
-      
-      // Only sort if we added a new candle (performance optimization)
-      if (candleIndex < 0) {
-        return ensureUniqueTimestamps(newCandles);
-      }
-      
-      return newCandles;
-    });
+        
+        // Only sort if we added a new candle (performance optimization)
+        if (candleIndex < 0) {
+          return ensureUniqueTimestamps(newCandles);
+        }
+        
+        return newCandles;
+      });
+    }
     
     processedCandleTimesRef.current.add(timeValue);
   }, [chartType]);
@@ -244,35 +278,44 @@ export const useChartData = ({
     if (now - lastUpdateTimeRef.current < 100) return; // 100ms throttle
     lastUpdateTimeRef.current = now;
     
-    setCandles(prevCandles => {
-      if (!prevCandles || prevCandles.length === 0) return prevCandles;
-      
-      const newCandles = [...prevCandles];
-      const lastCandle = { ...newCandles[newCandles.length - 1] };
-      
-      if (chartType === 'line' || chartType === 'area') {
-        if ((lastCandle as LineData<Time>).value === price) return prevCandles;
-        (lastCandle as LineData<Time>).value = price;
-      } else {
-        const candleData = lastCandle as CandlestickData<Time>;
-        if (candleData.close === price) return prevCandles;
+    if (chartType === 'line' || chartType === 'area') {
+      setCandles(prevCandles => {
+        if (!prevCandles || prevCandles.length === 0) return prevCandles;
         
-        candleData.high = Math.max(candleData.high, price);
-        candleData.low = Math.min(candleData.low, price);
-        candleData.close = price;
+        const newCandles = [...(prevCandles as ExtendedLineData[])];
+        const lastCandle = { ...newCandles[newCandles.length - 1] };
+        
+        if (lastCandle.value === price) return prevCandles;
+        lastCandle.value = price;
+        
+        newCandles[newCandles.length - 1] = lastCandle;
+        return newCandles;
+      });
+    } else {
+      setCandles(prevCandles => {
+        if (!prevCandles || prevCandles.length === 0) return prevCandles;
+        
+        const newCandles = [...(prevCandles as ExtendedCandlestickData[])];
+        const lastCandle = { ...newCandles[newCandles.length - 1] };
+        
+        if (lastCandle.close === price) return prevCandles;
+        
+        lastCandle.high = Math.max(lastCandle.high, price);
+        lastCandle.low = Math.min(lastCandle.low, price);
+        lastCandle.close = price;
         
         // Preserve volume data
-        const volumeValue = Number(candleData.volume) || Number(candleData.customValues?.tick_volume) || 0;
-        candleData.customValues = {
-          ...candleData.customValues,
+        const volumeValue = Number(lastCandle.customValues?.tick_volume) || Number(lastCandle.customValues?.volume) || 0;
+        lastCandle.customValues = {
+          ...lastCandle.customValues,
           volume: volumeValue,
           tick_volume: volumeValue
         };
-      }
-      
-      newCandles[newCandles.length - 1] = lastCandle;
-      return newCandles;
-    });
+        
+        newCandles[newCandles.length - 1] = lastCandle;
+        return newCandles;
+      });
+    }
   }, [chartType, candles.length]);
   
   // Optimized latest candle processing
@@ -292,11 +335,14 @@ export const useChartData = ({
   useEffect(() => {
     return () => {
       processedCandleTimesRef.current.clear();
+      if (dataCacheRef.current) {
+        dataCacheRef.current.destroy();
+      }
     };
   }, []);
 
   return {
-    candles,
+    candles: candles as CandlestickData<Time>[] | LineData<Time>[],
     isLoading,
     updateLatestCandle,
     updateLatestPrice
