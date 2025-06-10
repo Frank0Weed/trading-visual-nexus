@@ -1,11 +1,10 @@
-
 interface CacheEntry<T> {
   data: T;
   timestamp: number;
   expiresAt: number;
 }
 
-class DataCache {
+export class DataCache {
   private cache = new Map<string, CacheEntry<any>>();
   private readonly DEFAULT_TTL = 30000; // 30 seconds
   private readonly MAX_CACHE_SIZE = 1000;
