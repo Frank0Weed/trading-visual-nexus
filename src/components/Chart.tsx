@@ -59,12 +59,28 @@ const Chart: React.FC<ChartProps> = React.memo(({
     ohlc: null
   });
 
+  // Track data changes to prevent unnecessary updates
+  const dataLengthRef = useRef<number>(0);
+  const lastDataHashRef = useRef<string>('');
+  const isUserInteractingRef = useRef<boolean>(false);
+
   // Use performance optimization hook
   const { throttledUpdate, compressDataForVisualization, cleanup } = useChartPerformance({
     maxDataPoints: 1000,
     updateThrottleMs: 100,
     enableVirtualization: true
   });
+
+  // Create a stable hash of the last few candles to detect real changes
+  const getDataHash = useCallback((data: any[]) => {
+    if (!data || data.length === 0) return '';
+    const lastCandles = data.slice(-5); // Only check last 5 candles
+    return JSON.stringify(lastCandles.map(c => ({
+      time: c.time,
+      close: 'close' in c ? c.close : c.value,
+      volume: c.customValues?.volume || 0
+    })));
+  }, []);
 
   // Memoize chart options to prevent unnecessary recreations
   const chartOptions = useMemo(() => ({
@@ -106,17 +122,17 @@ const Chart: React.FC<ChartProps> = React.memo(({
     handleScale: {
       mouseWheel: true,
       pinch: true,
-      axisPressedMouseMove: false
+      axisPressedMouseMove: true
     },
     handleScroll: {
       mouseWheel: true,
-      pressedMouseMove: false,
+      pressedMouseMove: true,
       horzTouchDrag: true,
       vertTouchDrag: true
     },
     kineticScroll: {
-      touch: false,
-      mouse: false
+      touch: true,
+      mouse: true
     }
   }), [height, width]);
 
@@ -136,6 +152,7 @@ const Chart: React.FC<ChartProps> = React.memo(({
   // Optimize zoom functions with useCallback
   const handleZoomIn = useCallback(() => {
     if (!chartRef.current) return;
+    isUserInteractingRef.current = true;
     const timeScale = chartRef.current.timeScale();
     const visibleLogicalRange = timeScale.getVisibleLogicalRange();
     if (visibleLogicalRange !== null) {
@@ -145,10 +162,12 @@ const Chart: React.FC<ChartProps> = React.memo(({
       };
       timeScale.setVisibleLogicalRange(newRange);
     }
+    setTimeout(() => { isUserInteractingRef.current = false; }, 1000);
   }, []);
 
   const handleZoomOut = useCallback(() => {
     if (!chartRef.current) return;
+    isUserInteractingRef.current = true;
     const timeScale = chartRef.current.timeScale();
     const visibleLogicalRange = timeScale.getVisibleLogicalRange();
     if (visibleLogicalRange !== null) {
@@ -159,6 +178,7 @@ const Chart: React.FC<ChartProps> = React.memo(({
       };
       timeScale.setVisibleLogicalRange(newRange);
     }
+    setTimeout(() => { isUserInteractingRef.current = false; }, 1000);
   }, []);
 
   // Optimize candle finding with useMemo
@@ -177,7 +197,7 @@ const Chart: React.FC<ChartProps> = React.memo(({
 
   // Optimize price line updates
   const updatePriceLine = useCallback((price: number) => {
-    if (!seriesRef.current) return;
+    if (!seriesRef.current || isUserInteractingRef.current) return;
     
     try {
       // Remove old price line if exists
@@ -210,9 +230,11 @@ const Chart: React.FC<ChartProps> = React.memo(({
     if (price !== currentPrice) {
       setCurrentPrice(price);
       
-      // Throttle price line updates
+      // Throttle price line updates and skip if user is interacting
       const timeoutId = setTimeout(() => {
-        updatePriceLine(price);
+        if (!isUserInteractingRef.current) {
+          updatePriceLine(price);
+        }
       }, 100);
       
       return () => {
@@ -237,23 +259,12 @@ const Chart: React.FC<ChartProps> = React.memo(({
       }
     };
 
-    // Prevent default keyboard events that might cause shifting
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.shiftKey && (event.key === 'ArrowLeft' || event.key === 'ArrowRight' || event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
-        event.preventDefault();
-        event.stopPropagation();
-      }
-    };
-
     try {
       // Create chart with optimized options
       const chart = createChart(container, {
         ...chartOptions,
         width: container.clientWidth
       });
-
-      // Add keyboard event listener to prevent shift+move behavior
-      container.addEventListener('keydown', handleKeyDown, true);
 
       let series;
 
@@ -314,11 +325,21 @@ const Chart: React.FC<ChartProps> = React.memo(({
           const optimizedVolumeData = compressDataForVisualization(volumeData, 1000);
           volumeSeries.setData(optimizedVolumeData as HistogramData<Time>[]);
         }
+
+        // Initialize tracking variables
+        dataLengthRef.current = data.length;
+        lastDataHashRef.current = getDataHash(data);
       }
 
       seriesRef.current = series || null;
       volumeSeriesRef.current = volumeSeries;
       chartRef.current = chart;
+
+      // Track user interactions
+      chart.timeScale().subscribeVisibleLogicalRangeChange(() => {
+        isUserInteractingRef.current = true;
+        setTimeout(() => { isUserInteractingRef.current = false; }, 2000);
+      });
 
       // Optimize crosshair move handler
       let crosshairMoveTimeout: NodeJS.Timeout;
@@ -376,7 +397,6 @@ const Chart: React.FC<ChartProps> = React.memo(({
         console.log('Cleaning up chart');
         clearTimeout(crosshairMoveTimeout);
         cleanup();
-        container.removeEventListener('keydown', handleKeyDown, true);
         if (resizeObserverRef.current) {
           resizeObserverRef.current.unobserve(container);
         }
@@ -389,31 +409,66 @@ const Chart: React.FC<ChartProps> = React.memo(({
     } catch (error) {
       console.error('Error initializing chart:', error);
     }
-  }, [chartType, symbol, timeframe, chartOptions, compressDataForVisualization, findCandleByTime, onVisibleTimeRangeChange, cleanup]);
+  }, [chartType, symbol, timeframe, chartOptions, compressDataForVisualization, findCandleByTime, onVisibleTimeRangeChange, cleanup, getDataHash]);
 
-  // Optimize data updates with throttling
+  // Optimize data updates with better change detection
   useEffect(() => {
     if (!isInitialized || !seriesRef.current || !data || data.length === 0) return;
     
-    console.log('Updating chart data for', symbol, 'with', data.length, 'candles');
+    const currentHash = getDataHash(data);
+    const hasDataChanged = data.length !== dataLengthRef.current || currentHash !== lastDataHashRef.current;
     
-    try {
-      throttledUpdate([...data], (optimizedData) => {
-        if (chartType === 'candlestick' || chartType === 'bar') {
-          seriesRef.current?.setData(optimizedData as CandlestickData<Time>[]);
+    // Only update if data actually changed and user is not interacting
+    if (hasDataChanged && !isUserInteractingRef.current) {
+      console.log('Updating chart data for', symbol, 'with', data.length, 'candles');
+      
+      try {
+        // Use update instead of setData for better performance on small changes
+        if (data.length > dataLengthRef.current) {
+          // New data added - just update the last few candles
+          const newCandles = data.slice(dataLengthRef.current - 1);
+          
+          if (chartType === 'candlestick' || chartType === 'bar') {
+            newCandles.forEach(candle => {
+              seriesRef.current?.update(candle as CandlestickData<Time>);
+            });
+          } else {
+            newCandles.forEach(candle => {
+              seriesRef.current?.update(candle as LineData<Time>);
+            });
+          }
+          
+          // Update volume data
+          if (volumeData && volumeData.length > 0 && volumeSeriesRef.current) {
+            const newVolumeData = volumeData.slice(dataLengthRef.current - 1);
+            newVolumeData.forEach(vol => {
+              volumeSeriesRef.current?.update(vol as HistogramData<Time>);
+            });
+          }
         } else {
-          seriesRef.current?.setData(optimizedData as LineData<Time>[]);
+          // Full data refresh needed
+          throttledUpdate([...data], (optimizedData) => {
+            if (chartType === 'candlestick' || chartType === 'bar') {
+              seriesRef.current?.setData(optimizedData as CandlestickData<Time>[]);
+            } else {
+              seriesRef.current?.setData(optimizedData as LineData<Time>[]);
+            }
+            
+            if (volumeData && volumeData.length > 0 && volumeSeriesRef.current) {
+              const optimizedVolumeData = compressDataForVisualization(volumeData, 1000);
+              volumeSeriesRef.current.setData(optimizedVolumeData as HistogramData<Time>[]);
+            }
+          });
         }
         
-        if (volumeData && volumeData.length > 0 && volumeSeriesRef.current) {
-          const optimizedVolumeData = compressDataForVisualization(volumeData, 1000);
-          volumeSeriesRef.current.setData(optimizedVolumeData as HistogramData<Time>[]);
-        }
-      });
-    } catch (error) {
-      console.error('Error updating chart data:', error);
+        // Update tracking variables
+        dataLengthRef.current = data.length;
+        lastDataHashRef.current = currentHash;
+      } catch (error) {
+        console.error('Error updating chart data:', error);
+      }
     }
-  }, [data, isInitialized, chartType, throttledUpdate, volumeData, compressDataForVisualization, symbol]);
+  }, [data, isInitialized, chartType, throttledUpdate, volumeData, compressDataForVisualization, symbol, getDataHash]);
 
   // Format timestamp for display
   const formatTime = useCallback((timestamp: Time | null): string => {
