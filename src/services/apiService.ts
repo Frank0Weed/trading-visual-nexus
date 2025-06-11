@@ -52,11 +52,21 @@ export const fetchTimeframes = async (): Promise<TimeFrame[]> => {
     const response = await fetch(`${API_BASE_URL}/timeframes`);
     const data = await response.json();
     
+    // Define all supported timeframes including the new ones
+    const supportedTimeframes = [
+      'M1', 'M5', 'M15', 'M30', 'H1', 'H4', 'D1', 'W1', 'MN1', 'MN'
+    ];
+    
+    // Use the API response timeframes if available, otherwise use our supported list
+    const timeframesToProcess = data.timeframes && data.timeframes.length > 0 
+      ? data.timeframes 
+      : supportedTimeframes;
+    
     // Map timeframes to more descriptive labels
-    return data.timeframes.map((tf: string) => {
+    return timeframesToProcess.map((tf: string) => {
       let label = tf;
       
-      // Create human-readable labels
+      // Create human-readable labels for all timeframes
       switch (tf) {
         case 'M1':
           label = '1 Min';
@@ -73,6 +83,9 @@ export const fetchTimeframes = async (): Promise<TimeFrame[]> => {
         case 'H1':
           label = '1 Hour';
           break;
+        case 'H4':
+          label = '4 Hours';
+          break;
         case 'D1':
           label = 'Daily';
           break;
@@ -81,6 +94,9 @@ export const fetchTimeframes = async (): Promise<TimeFrame[]> => {
           break;
         case 'MN1':
           label = 'Monthly';
+          break;
+        case 'MN':
+          label = 'Monthly (Alt)';
           break;
         default:
           label = tf;

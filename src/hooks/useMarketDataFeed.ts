@@ -33,7 +33,8 @@ const getCandleStartTime = (timestamp: number, timeframe: string): number => {
 
   const timeframeMinutes: Record<string, number> = {
     'M1': 1, 'M5': 5, 'M15': 15, 'M30': 30,
-    'H1': 60, 'H4': 240, 'D1': 1440, 'W1': 10080, 'MN1': 43200
+    'H1': 60, 'H4': 240, 'D1': 1440, 'W1': 10080, 
+    'MN1': 43200, 'MN': 43200  // Added MN1 and MN alias
   };
 
   const minutes = timeframeMinutes[timeframe] || 1;
@@ -129,7 +130,8 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
         symbols: symbols
       }));
       
-      const allTimeframes = ['M1', 'M5', 'M15', 'M30', 'H1', 'H4', 'D1', 'W1', 'MN1'];
+      // Subscribe to all supported timeframes including new ones
+      const allTimeframes = ['M1', 'M5', 'M15', 'M30', 'H1', 'H4', 'D1', 'W1', 'MN1', 'MN'];
       
       allTimeframes.forEach(timeframe => {
         sendMessage(JSON.stringify({
@@ -147,10 +149,10 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
     isInitializedRef.current = true;
   }, [readyState, symbols, currentTimeframe, sendMessage]);
 
-  // Add candle validators for each timeframe
+  // Add candle validators for each timeframe including new ones
   const candleValidators = useMemo(() => {
     const validators: Record<string, CandleTimeValidator> = {};
-    const timeframes = ['M1', 'M5', 'M15', 'M30', 'H1', 'H4', 'D1', 'W1', 'MN1'];
+    const timeframes = ['M1', 'M5', 'M15', 'M30', 'H1', 'H4', 'D1', 'W1', 'MN1', 'MN'];
     
     timeframes.forEach(tf => {
       validators[tf] = new CandleTimeValidator(tf, {
