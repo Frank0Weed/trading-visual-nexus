@@ -1,10 +1,10 @@
-
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import useWebSocket, { ReadyState } from 'react-use-websocket';
 import { getWebSocketUrl, PriceData, CandleData } from '../services/apiService';
 import { toast } from '@/components/ui/sonner';
 import { wsOptimizer } from '@/utils/wsOptimization';
 import { dataCache } from '@/services/dataCache';
+import { CandleTimeValidator } from '@/utils/candleTimeValidator';
 
 interface UseMarketDataFeedProps {
   symbols: string[];
@@ -69,6 +69,7 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
   const subscribedTimeframeRef = useRef<string>('');
   const isInitializedRef = useRef<boolean>(false);
   const lastCandleStartTimesRef = useRef<Record<string, Record<string, number>>>({});
+  const processedCandleTimesRef = useRef<Set<number>>(new Set());
   
   // Optimized refs with better memory management
   const lastPriceUpdateRef = useRef<Record<string, { time: number; bid: number; ask: number }>>({});
@@ -145,6 +146,21 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
     subscribedTimeframeRef.current = currentTimeframe || '';
     isInitializedRef.current = true;
   }, [readyState, symbols, currentTimeframe, sendMessage]);
+
+  // Add candle validators for each timeframe
+  const candleValidators = useMemo(() => {
+    const validators: Record<string, CandleTimeValidator> = {};
+    const timeframes = ['M1', 'M5', 'M15', 'M30', 'H1', 'H4', 'D1', 'W1', 'MN1'];
+    
+    timeframes.forEach(tf => {
+      validators[tf] = new CandleTimeValidator(tf, {
+        fillMissing: false, // Don't auto-fill in live feed
+        maxDelay: 120 // 2 minutes max delay for live data
+      });
+    });
+    
+    return validators;
+  }, []);
 
   // Optimized message processing with batching
   const processMessageBatch = useCallback(() => {
@@ -232,6 +248,20 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
         
         const candleTime = typeof candleData.time === 'string' ? parseInt(candleData.time, 10) : Number(candleData.time);
         if (isNaN(candleTime) || candleTime <= 0) return;
+        
+        // Validate candle timing
+        const validator = candleValidators[timeframe];
+        if (validator) {
+          const lastCandleTime = lastCandleStartTimesRef.current[symbol]?.[timeframe];
+          
+          if (lastCandleTime) {
+            const shouldCreate = validator.shouldCreateCandle(lastCandleTime, candleTime);
+            if (!shouldCreate) {
+              console.log(`Rejecting early candle for ${symbol} ${timeframe}. Time: ${candleTime}, Last: ${lastCandleTime}`);
+              return;
+            }
+          }
+        }
         
         const closePrice = parseFloat(candleData.close) || 0;
         
@@ -336,7 +366,7 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
       }
     });
     
-  }, [currentTimeframe]);
+  }, [currentTimeframe, candleValidators]);
 
   // Optimized message handling with queueing
   const handleMessage = useCallback((message: any) => {

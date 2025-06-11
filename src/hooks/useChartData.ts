@@ -1,4 +1,3 @@
-
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { toast } from '@/components/ui/sonner';
 import { 
@@ -9,6 +8,7 @@ import {
 import { CandlestickData, LineData, Time } from 'lightweight-charts';
 import { ChartType } from '@/components/Chart';
 import { DataCache } from '@/services/dataCache';
+import { CandleTimeValidator, validateAndFillCandles } from '@/utils/candleTimeValidator';
 
 interface UseChartDataProps {
   selectedSymbol: string;
@@ -122,7 +122,16 @@ export const useChartData = ({
     [selectedSymbol, selectedTimeframe]
   );
 
-  // Optimized candle fetching with caching
+  // Add candle validator
+  const candleValidator = useMemo(() => 
+    new CandleTimeValidator(selectedTimeframe, {
+      fillMissing: true,
+      maxDelay: 300 // 5 minutes max delay
+    }), 
+    [selectedTimeframe]
+  );
+
+  // Optimized candle fetching with validation
   useEffect(() => {
     const symbolTimeframeKey = `${selectedSymbol}-${selectedTimeframe}`;
     
@@ -145,7 +154,20 @@ export const useChartData = ({
         console.log(`Fetching candles for ${selectedSymbol} ${selectedTimeframe}`);
         const data = await fetchCandles(selectedSymbol, selectedTimeframe, 500);
         
-        let formattedData = formatCandleData(data, chartType);
+        // Validate and fill missing candles
+        const validatedData = validateAndFillCandles(data, selectedTimeframe, {
+          fillMissing: true,
+          maxDelay: 300
+        });
+        
+        // Check timing statistics
+        const stats = candleValidator.getTimingStats(validatedData);
+        if (stats.missingCount > 0) {
+          console.warn(`Found ${stats.missingCount} missing candles for ${selectedSymbol} ${selectedTimeframe}. Completeness: ${stats.completeness.toFixed(1)}%`);
+          toast.warning(`Chart data: ${stats.missingCount} missing candles filled`, { duration: 3000 });
+        }
+        
+        let formattedData = formatCandleData(validatedData, chartType);
         
         if (chartType === 'line' || chartType === 'area') {
           formattedData = ensureUniqueTimestamps<ExtendedLineData>(formattedData as ExtendedLineData[]);
@@ -171,15 +193,26 @@ export const useChartData = ({
     if (selectedSymbol && selectedTimeframe) {
       loadCandles();
     }
-  }, [selectedSymbol, selectedTimeframe, chartType, cacheKey]);
+  }, [selectedSymbol, selectedTimeframe, chartType, cacheKey, candleValidator]);
 
-  // Optimized candle update with better performance
+  // Optimized candle update with timing validation
   const updateLatestCandle = useCallback((candle: CandleData) => {
     if (!candle) return;
     
     const timeValue = typeof candle.time === 'string'
       ? parseInt(candle.time, 10)
       : Number(candle.time);
+    
+    // Validate candle timing
+    if (candles.length > 0) {
+      const lastCandle = candles[candles.length - 1];
+      const lastTime = Number(lastCandle.time);
+      
+      if (!candleValidator.shouldCreateCandle(lastTime, timeValue)) {
+        console.log(`Skipping early candle update. Expected time not reached.`);
+        return;
+      }
+    }
     
     // Prevent processing the same candle multiple times
     if (processedCandleTimesRef.current.has(timeValue)) {
@@ -268,7 +301,7 @@ export const useChartData = ({
     }
     
     processedCandleTimesRef.current.add(timeValue);
-  }, [chartType]);
+  }, [chartType, candleValidator, candles]);
   
   // Optimized price update with better throttling
   const updateLatestPrice = useCallback((price: number) => {
