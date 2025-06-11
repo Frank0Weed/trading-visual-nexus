@@ -1,4 +1,3 @@
-
 import React, { useRef, useEffect, useState, useMemo, useCallback } from 'react';
 import { createChart, CrosshairMode, IChartApi, ISeriesApi, Time, CandlestickData, HistogramData, LineData, LineStyle, PriceScaleMode, MouseEventParams } from 'lightweight-charts';
 import { cn } from '@/lib/utils';
@@ -81,13 +80,13 @@ const Chart: React.FC<ChartProps> = React.memo(({
     crosshair: {
       mode: CrosshairMode.Normal,
       vertLine: {
-        width: 1 as const,
+        width: 1,
         color: '#aaa',
         style: LineStyle.Solid,
         labelBackgroundColor: '#5d606b'
       },
       horzLine: {
-        width: 1 as const,
+        width: 1,
         color: '#aaa',
         style: LineStyle.Solid,
         labelBackgroundColor: '#5d606b'
@@ -100,18 +99,23 @@ const Chart: React.FC<ChartProps> = React.memo(({
     timeScale: {
       borderColor: '#242731',
       timeVisible: true,
-      secondsVisible: false
+      secondsVisible: false,
+      shiftVisibleRangeOnNewBar: false // Disable automatic shifting
     },
     handleScale: {
       mouseWheel: true,
       pinch: true,
-      axisPressedMouseMove: true
+      axisPressedMouseMove: false // Disable axis pressed mouse move
     },
     handleScroll: {
       mouseWheel: true,
-      pressedMouseMove: true,
+      pressedMouseMove: false, // Disable pressed mouse move to prevent shift+move behavior
       horzTouchDrag: true,
       vertTouchDrag: true
+    },
+    kineticScroll: {
+      touch: false, // Disable kinetic scrolling
+      mouse: false
     }
   }), [height, width]);
 
@@ -223,11 +227,22 @@ const Chart: React.FC<ChartProps> = React.memo(({
       }
     };
 
+    // Prevent default keyboard events that might cause shifting
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.shiftKey && (event.key === 'ArrowLeft' || event.key === 'ArrowRight' || event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+    };
+
     // Create chart with optimized options
     const chart = createChart(chartContainerRef.current, {
       ...chartOptions,
       width: chartContainerRef.current.clientWidth
     });
+
+    // Add keyboard event listener to prevent shift+move behavior
+    chartContainerRef.current.addEventListener('keydown', handleKeyDown, true);
 
     let series;
 
@@ -449,3 +464,5 @@ const Chart: React.FC<ChartProps> = React.memo(({
 Chart.displayName = 'Chart';
 
 export default Chart;
+
+}
