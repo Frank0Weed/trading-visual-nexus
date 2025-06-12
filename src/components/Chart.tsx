@@ -464,5 +464,3 @@ const Chart: React.FC<ChartProps> = React.memo(({
 Chart.displayName = 'Chart';
 
 export default Chart;
-
-}
