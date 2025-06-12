@@ -1,3 +1,4 @@
+
 import React, { useRef, useEffect, useState, useMemo, useCallback } from 'react';
 import { createChart, CrosshairMode, IChartApi, ISeriesApi, Time, CandlestickData, HistogramData, LineData, LineStyle, PriceScaleMode, MouseEventParams } from 'lightweight-charts';
 import { cn } from '@/lib/utils';
@@ -80,13 +81,13 @@ const Chart: React.FC<ChartProps> = React.memo(({
     crosshair: {
       mode: CrosshairMode.Normal,
       vertLine: {
-        width: 1,
+        width: 1 as const,
         color: '#aaa',
         style: LineStyle.Solid,
         labelBackgroundColor: '#5d606b'
       },
       horzLine: {
-        width: 1,
+        width: 1 as const,
         color: '#aaa',
         style: LineStyle.Solid,
         labelBackgroundColor: '#5d606b'
