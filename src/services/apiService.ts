@@ -177,4 +177,40 @@ export const fetchCandles = async (
   }
 };
 
-export const getWebSocketUrl = (): string => WS_URL;
+// Enhanced WebSocket URL function with better connection handling
+export const getWebSocketUrl = (): string => {
+  console.log('WebSocket URL:', WS_URL);
+  return WS_URL;
+};
+
+// Test WebSocket connection
+export const testWebSocketConnection = (): Promise<boolean> => {
+  return new Promise((resolve) => {
+    console.log('Testing WebSocket connection to:', WS_URL);
+    
+    const ws = new WebSocket(WS_URL);
+    
+    const timeout = setTimeout(() => {
+      console.log('WebSocket connection test timeout');
+      ws.close();
+      resolve(false);
+    }, 5000);
+    
+    ws.onopen = () => {
+      console.log('WebSocket connection test successful');
+      clearTimeout(timeout);
+      ws.close();
+      resolve(true);
+    };
+    
+    ws.onerror = (error) => {
+      console.error('WebSocket connection test error:', error);
+      clearTimeout(timeout);
+      resolve(false);
+    };
+    
+    ws.onclose = () => {
+      console.log('WebSocket connection test closed');
+    };
+  });
+};
