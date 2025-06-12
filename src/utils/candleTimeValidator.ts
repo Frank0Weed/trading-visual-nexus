@@ -1,3 +1,6 @@
+
+import { CandleData } from '../services/apiService';
+
 export interface CandleValidationOptions {
   fillMissing?: boolean;
   maxDelay?: number;
@@ -6,6 +9,19 @@ export interface CandleValidationOptions {
 interface TimingStats {
   missingCount: number;
   completeness: number;
+}
+
+// Extended interface for candle-like objects
+interface CandleLike {
+  time: string | number;
+  open?: number;
+  high?: number;
+  low?: number;
+  close?: number;
+  tick_volume?: number;
+  volume?: number;
+  spread?: number;
+  real_volume?: number;
 }
 
 export class CandleTimeValidator {
@@ -40,12 +56,22 @@ export class CandleTimeValidator {
     return timeframeMap[timeframe] || 1;
   }
 
-  public shouldCreateCandle(lastTime: number, currentTime: number): boolean {
-    const expectedTime = lastTime + this.timeframeMinutes * 60;
-    return currentTime >= expectedTime;
+  private normalizeTime(time: string | number): number {
+    if (typeof time === 'string') {
+      const parsed = parseInt(time, 10);
+      return isNaN(parsed) ? 0 : parsed;
+    }
+    return Number(time) || 0;
   }
 
-  public fillMissingCandles<T extends { time: number }>(candles: T[]): T[] {
+  public shouldCreateCandle(lastTime: string | number, currentTime: string | number): boolean {
+    const normalizedLastTime = this.normalizeTime(lastTime);
+    const normalizedCurrentTime = this.normalizeTime(currentTime);
+    const expectedTime = normalizedLastTime + this.timeframeMinutes * 60;
+    return normalizedCurrentTime >= expectedTime;
+  }
+
+  public fillMissingCandles<T extends CandleLike>(candles: T[]): T[] {
     if (!this.options.fillMissing) {
       return candles;
     }
@@ -53,25 +79,33 @@ export class CandleTimeValidator {
     const filledCandles: T[] = [];
     if (candles.length === 0) return filledCandles;
 
-    let lastTime = candles[0].time;
+    let lastTime = this.normalizeTime(candles[0].time);
     filledCandles.push(candles[0]);
 
     for (let i = 1; i < candles.length; i++) {
-      const currentTime = candles[i].time;
+      const currentTime = this.normalizeTime(candles[i].time);
       let expectedTime = lastTime + this.timeframeMinutes * 60;
 
       while (currentTime > expectedTime) {
+        // Get the previous candle's close price or fallback values
+        const previousCandle = filledCandles[filledCandles.length - 1];
+        const closePrice = previousCandle.close || 0;
+        
         // Create a new candle with the expected time
         const missingCandle = {
+          ...previousCandle,
           time: expectedTime,
-          open: filledCandles[filledCandles.length - 1].close,
-          high: filledCandles[filledCandles.length - 1].close,
-          low: filledCandles[filledCandles.length - 1].close,
-          close: filledCandles[filledCandles.length - 1].close,
-          volume: 0
-        } as any; // Using any to avoid type issues
+          open: closePrice,
+          high: closePrice,
+          low: closePrice,
+          close: closePrice,
+          tick_volume: 0,
+          volume: 0,
+          spread: previousCandle.spread || 0,
+          real_volume: 0
+        } as T;
 
-        filledCandles.push(missingCandle as T);
+        filledCandles.push(missingCandle);
         expectedTime += this.timeframeMinutes * 60;
       }
 
@@ -82,15 +116,15 @@ export class CandleTimeValidator {
     return filledCandles;
   }
 
-  public getTimingStats<T extends { time: number }>(candles: T[]): TimingStats {
+  public getTimingStats<T extends CandleLike>(candles: T[]): TimingStats {
     let missingCount = 0;
     if (candles.length <= 1) {
       return { missingCount: 0, completeness: 100 };
     }
 
-    let lastTime = candles[0].time;
+    let lastTime = this.normalizeTime(candles[0].time);
     for (let i = 1; i < candles.length; i++) {
-      const currentTime = candles[i].time;
+      const currentTime = this.normalizeTime(candles[i].time);
       let expectedTime = lastTime + this.timeframeMinutes * 60;
 
       while (currentTime > expectedTime) {
@@ -107,11 +141,11 @@ export class CandleTimeValidator {
   }
 }
 
-export function validateAndFillCandles<T extends { time: number }>(
-  data: T[],
+export function validateAndFillCandles(
+  data: CandleData[],
   timeframe: string,
   options: CandleValidationOptions = {}
-): T[] {
+): CandleData[] {
   const validator = new CandleTimeValidator(timeframe, options);
   return validator.fillMissingCandles(data);
 }
