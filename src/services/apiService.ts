@@ -52,21 +52,11 @@ export const fetchTimeframes = async (): Promise<TimeFrame[]> => {
     const response = await fetch(`${API_BASE_URL}/timeframes`);
     const data = await response.json();
     
-    // Define all supported timeframes including the new ones
-    const supportedTimeframes = [
-      'M1', 'M5', 'M15', 'M30', 'H1', 'H4', 'D1', 'W1', 'MN1', 'MN'
-    ];
-    
-    // Use the API response timeframes if available, otherwise use our supported list
-    const timeframesToProcess = data.timeframes && data.timeframes.length > 0 
-      ? data.timeframes 
-      : supportedTimeframes;
-    
     // Map timeframes to more descriptive labels
-    return timeframesToProcess.map((tf: string) => {
+    return data.timeframes.map((tf: string) => {
       let label = tf;
       
-      // Create human-readable labels for all timeframes
+      // Create human-readable labels
       switch (tf) {
         case 'M1':
           label = '1 Min';
@@ -83,9 +73,6 @@ export const fetchTimeframes = async (): Promise<TimeFrame[]> => {
         case 'H1':
           label = '1 Hour';
           break;
-        case 'H4':
-          label = '4 Hours';
-          break;
         case 'D1':
           label = 'Daily';
           break;
@@ -94,9 +81,6 @@ export const fetchTimeframes = async (): Promise<TimeFrame[]> => {
           break;
         case 'MN1':
           label = 'Monthly';
-          break;
-        case 'MN':
-          label = 'Monthly (Alt)';
           break;
         default:
           label = tf;
@@ -177,40 +161,4 @@ export const fetchCandles = async (
   }
 };
 
-// Enhanced WebSocket URL function with better connection handling
-export const getWebSocketUrl = (): string => {
-  console.log('WebSocket URL:', WS_URL);
-  return WS_URL;
-};
-
-// Test WebSocket connection
-export const testWebSocketConnection = (): Promise<boolean> => {
-  return new Promise((resolve) => {
-    console.log('Testing WebSocket connection to:', WS_URL);
-    
-    const ws = new WebSocket(WS_URL);
-    
-    const timeout = setTimeout(() => {
-      console.log('WebSocket connection test timeout');
-      ws.close();
-      resolve(false);
-    }, 5000);
-    
-    ws.onopen = () => {
-      console.log('WebSocket connection test successful');
-      clearTimeout(timeout);
-      ws.close();
-      resolve(true);
-    };
-    
-    ws.onerror = (error) => {
-      console.error('WebSocket connection test error:', error);
-      clearTimeout(timeout);
-      resolve(false);
-    };
-    
-    ws.onclose = () => {
-      console.log('WebSocket connection test closed');
-    };
-  });
-};
+export const getWebSocketUrl = (): string => WS_URL;

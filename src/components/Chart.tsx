@@ -1,6 +1,5 @@
-
 import React, { useRef, useEffect, useState, useMemo, useCallback } from 'react';
-import { createChart, CrosshairMode, IChartApi, ISeriesApi, Time, CandlestickData, HistogramData, LineData, LineStyle, PriceScaleMode, MouseEventParams, LineWidth } from 'lightweight-charts';
+import { createChart, CrosshairMode, IChartApi, ISeriesApi, Time, CandlestickData, HistogramData, LineData, LineStyle, PriceScaleMode, MouseEventParams } from 'lightweight-charts';
 import { cn } from '@/lib/utils';
 import { CandleData } from '@/services/apiService';
 import { ZoomIn, ZoomOut } from 'lucide-react';
@@ -59,28 +58,12 @@ const Chart: React.FC<ChartProps> = React.memo(({
     ohlc: null
   });
 
-  // Track data changes to prevent unnecessary updates
-  const dataLengthRef = useRef<number>(0);
-  const lastDataHashRef = useRef<string>('');
-  const isUserInteractingRef = useRef<boolean>(false);
-
   // Use performance optimization hook
   const { throttledUpdate, compressDataForVisualization, cleanup } = useChartPerformance({
     maxDataPoints: 1000,
     updateThrottleMs: 100,
     enableVirtualization: true
   });
-
-  // Create a stable hash of the last few candles to detect real changes
-  const getDataHash = useCallback((data: any[]) => {
-    if (!data || data.length === 0) return '';
-    const lastCandles = data.slice(-5); // Only check last 5 candles
-    return JSON.stringify(lastCandles.map(c => ({
-      time: c.time,
-      close: 'close' in c ? c.close : c.value,
-      volume: c.customValues?.volume || 0
-    })));
-  }, []);
 
   // Memoize chart options to prevent unnecessary recreations
   const chartOptions = useMemo(() => ({
@@ -97,13 +80,13 @@ const Chart: React.FC<ChartProps> = React.memo(({
     crosshair: {
       mode: CrosshairMode.Normal,
       vertLine: {
-        width: 1 as LineWidth,
+        width: 1,
         color: '#aaa',
         style: LineStyle.Solid,
         labelBackgroundColor: '#5d606b'
       },
       horzLine: {
-        width: 1 as LineWidth,
+        width: 1,
         color: '#aaa',
         style: LineStyle.Solid,
         labelBackgroundColor: '#5d606b'
@@ -117,22 +100,22 @@ const Chart: React.FC<ChartProps> = React.memo(({
       borderColor: '#242731',
       timeVisible: true,
       secondsVisible: false,
-      shiftVisibleRangeOnNewBar: false
+      shiftVisibleRangeOnNewBar: false // Disable automatic shifting
     },
     handleScale: {
       mouseWheel: true,
       pinch: true,
-      axisPressedMouseMove: true
+      axisPressedMouseMove: false // Disable axis pressed mouse move
     },
     handleScroll: {
       mouseWheel: true,
-      pressedMouseMove: true,
+      pressedMouseMove: false, // Disable pressed mouse move to prevent shift+move behavior
       horzTouchDrag: true,
       vertTouchDrag: true
     },
     kineticScroll: {
-      touch: true,
-      mouse: true
+      touch: false, // Disable kinetic scrolling
+      mouse: false
     }
   }), [height, width]);
 
@@ -152,7 +135,6 @@ const Chart: React.FC<ChartProps> = React.memo(({
   // Optimize zoom functions with useCallback
   const handleZoomIn = useCallback(() => {
     if (!chartRef.current) return;
-    isUserInteractingRef.current = true;
     const timeScale = chartRef.current.timeScale();
     const visibleLogicalRange = timeScale.getVisibleLogicalRange();
     if (visibleLogicalRange !== null) {
@@ -162,12 +144,10 @@ const Chart: React.FC<ChartProps> = React.memo(({
       };
       timeScale.setVisibleLogicalRange(newRange);
     }
-    setTimeout(() => { isUserInteractingRef.current = false; }, 1000);
   }, []);
 
   const handleZoomOut = useCallback(() => {
     if (!chartRef.current) return;
-    isUserInteractingRef.current = true;
     const timeScale = chartRef.current.timeScale();
     const visibleLogicalRange = timeScale.getVisibleLogicalRange();
     if (visibleLogicalRange !== null) {
@@ -178,7 +158,6 @@ const Chart: React.FC<ChartProps> = React.memo(({
       };
       timeScale.setVisibleLogicalRange(newRange);
     }
-    setTimeout(() => { isUserInteractingRef.current = false; }, 1000);
   }, []);
 
   // Optimize candle finding with useMemo
@@ -197,278 +176,220 @@ const Chart: React.FC<ChartProps> = React.memo(({
 
   // Optimize price line updates
   const updatePriceLine = useCallback((price: number) => {
-    if (!seriesRef.current || isUserInteractingRef.current) return;
+    if (!seriesRef.current) return;
     
-    try {
-      // Remove old price line if exists
-      if (priceLineRef.current) {
-        seriesRef.current.removePriceLine(priceLineRef.current);
-      }
-
-      // Create new price line
-      priceLineRef.current = seriesRef.current.createPriceLine({
-        price: price,
-        color: '#2196F3',
-        lineWidth: 2,
-        lineStyle: LineStyle.Dashed,
-        axisLabelVisible: true,
-        title: 'Current'
-      });
-    } catch (error) {
-      console.error('Error updating price line:', error);
+    // Remove old price line if exists
+    if (priceLineRef.current) {
+      seriesRef.current.removePriceLine(priceLineRef.current);
     }
+
+    // Create new price line
+    priceLineRef.current = seriesRef.current.createPriceLine({
+      price: price,
+      color: '#2196F3',
+      lineWidth: 2,
+      lineStyle: LineStyle.Dashed,
+      axisLabelVisible: true,
+      title: 'Current'
+    });
   }, []);
 
   // Set up live price line with performance optimization
   useEffect(() => {
-    if (!data || data.length === 0 || !seriesRef.current || !isInitialized) return;
+    if (!data || data.length === 0 || !seriesRef.current) return;
 
     const lastCandle = data[data.length - 1];
     const price = 'close' in lastCandle ? lastCandle.close : lastCandle.value;
+    setCurrentPrice(price);
     
-    // Only update if price actually changed
-    if (price !== currentPrice) {
-      setCurrentPrice(price);
-      
-      // Throttle price line updates and skip if user is interacting
-      const timeoutId = setTimeout(() => {
-        if (!isUserInteractingRef.current) {
-          updatePriceLine(price);
-        }
-      }, 100);
-      
-      return () => {
-        clearTimeout(timeoutId);
-      };
-    }
-  }, [data, isInitialized, currentPrice, updatePriceLine]);
+    // Throttle price line updates
+    const timeoutId = setTimeout(() => {
+      updatePriceLine(price);
+    }, 50);
+    
+    return () => {
+      clearTimeout(timeoutId);
+      if (seriesRef.current && priceLineRef.current) {
+        seriesRef.current.removePriceLine(priceLineRef.current);
+      }
+    };
+  }, [data, isInitialized, updatePriceLine]);
 
   // Initialize chart with performance optimizations
   useEffect(() => {
     if (!chartContainerRef.current) return;
     
-    console.log('Initializing chart for', symbol, timeframe);
-    
-    const container = chartContainerRef.current;
-    
     const handleResize = () => {
-      if (chartRef.current && container) {
+      if (chartRef.current && chartContainerRef.current) {
         chartRef.current.applyOptions({
-          width: container.clientWidth
+          width: chartContainerRef.current.clientWidth
         });
       }
     };
 
-    try {
-      // Create chart with optimized options
-      const chart = createChart(container, {
-        ...chartOptions,
-        width: container.clientWidth
-      });
-
-      let series;
-
-      // Create series based on chart type with performance settings
-      if (chartType === 'candlestick') {
-        series = chart.addCandlestickSeries({
-          upColor: '#26a69a',
-          downColor: '#ef5350',
-          borderVisible: false,
-          wickUpColor: '#26a69a',
-          wickDownColor: '#ef5350'
-        });
-      } else if (chartType === 'line') {
-        series = chart.addLineSeries({
-          color: '#2962FF',
-          lineWidth: 2,
-          crosshairMarkerVisible: true,
-          crosshairMarkerRadius: 4
-        });
-      } else if (chartType === 'bar') {
-        series = chart.addBarSeries({
-          upColor: '#26a69a',
-          downColor: '#ef5350'
-        });
-      } else if (chartType === 'area') {
-        series = chart.addAreaSeries({
-          topColor: 'rgba(41, 98, 255, 0.28)',
-          bottomColor: 'rgba(41, 98, 255, 0.05)',
-          lineColor: '#2962FF',
-          lineWidth: 2
-        });
+    // Prevent default keyboard events that might cause shifting
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.shiftKey && (event.key === 'ArrowLeft' || event.key === 'ArrowRight' || event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
+        event.preventDefault();
+        event.stopPropagation();
       }
+    };
 
-      // Add volume histogram with optimization
-      const volumeSeries = chart.addHistogramSeries({
-        color: '#26a69a',
-        priceFormat: { type: 'volume' },
-        priceScaleId: ''
+    // Create chart with optimized options
+    const chart = createChart(chartContainerRef.current, {
+      ...chartOptions,
+      width: chartContainerRef.current.clientWidth
+    });
+
+    // Add keyboard event listener to prevent shift+move behavior
+    chartContainerRef.current.addEventListener('keydown', handleKeyDown, true);
+
+    let series;
+
+    // Create series based on chart type with performance settings
+    if (chartType === 'candlestick') {
+      series = chart.addCandlestickSeries({
+        upColor: '#26a69a',
+        downColor: '#ef5350',
+        borderVisible: false,
+        wickUpColor: '#26a69a',
+        wickDownColor: '#ef5350'
       });
-
-      volumeSeries.priceScale().applyOptions({
-        scaleMargins: { top: 0.8, bottom: 0 },
-        visible: true,
-        autoScale: true
+    } else if (chartType === 'line') {
+      series = chart.addLineSeries({
+        color: '#2962FF',
+        lineWidth: 2,
+        crosshairMarkerVisible: true,
+        crosshairMarkerRadius: 4
       });
-
-      // Set data with performance optimization
-      if (data && data.length > 0) {
-        const optimizedData = compressDataForVisualization(data, 1000);
-        
-        if (chartType === 'candlestick' || chartType === 'bar') {
-          series?.setData(optimizedData as CandlestickData<Time>[]);
-        } else {
-          series?.setData(optimizedData as LineData<Time>[]);
-        }
-        
-        if (volumeData.length > 0) {
-          const optimizedVolumeData = compressDataForVisualization(volumeData, 1000);
-          volumeSeries.setData(optimizedVolumeData as HistogramData<Time>[]);
-        }
-
-        // Initialize tracking variables
-        dataLengthRef.current = data.length;
-        lastDataHashRef.current = getDataHash(data);
-      }
-
-      seriesRef.current = series || null;
-      volumeSeriesRef.current = volumeSeries;
-      chartRef.current = chart;
-
-      // Track user interactions
-      chart.timeScale().subscribeVisibleLogicalRangeChange(() => {
-        isUserInteractingRef.current = true;
-        setTimeout(() => { isUserInteractingRef.current = false; }, 2000);
+    } else if (chartType === 'bar') {
+      series = chart.addBarSeries({
+        upColor: '#26a69a',
+        downColor: '#ef5350'
       });
-
-      // Optimize crosshair move handler
-      let crosshairMoveTimeout: NodeJS.Timeout;
-      chart.subscribeCrosshairMove((param: MouseEventParams) => {
-        clearTimeout(crosshairMoveTimeout);
-        crosshairMoveTimeout = setTimeout(() => {
-          if (param.point === undefined || !param.time || 
-              param.point.x < 0 || param.point.x > container.clientWidth || 
-              param.point.y < 0 || param.point.y > container.clientHeight) {
-            setHoverData({ time: null, price: null, ohlc: null });
-            return;
-          }
-          
-          const candle = findCandleByTime(param.time);
-          let ohlcData = null;
-          
-          if (candle && 'open' in candle) {
-            const candleWithOHLC = candle as CandlestickData<Time>;
-            ohlcData = {
-              open: candleWithOHLC.open,
-              high: candleWithOHLC.high,
-              low: candleWithOHLC.low,
-              close: candleWithOHLC.close,
-              volume: 'volume' in candleWithOHLC ? candleWithOHLC.volume : undefined
-            };
-          } else if (candle && 'value' in candle) {
-            ohlcData = { close: (candle as LineData<Time>).value };
-          }
-
-          const price = candle ? 'close' in candle ? candle.close : 'value' in candle ? candle.value : null : null;
-          setHoverData({ time: param.time, price: price, ohlc: ohlcData });
-        }, 16); // ~60fps
+    } else if (chartType === 'area') {
+      series = chart.addAreaSeries({
+        topColor: 'rgba(41, 98, 255, 0.28)',
+        bottomColor: 'rgba(41, 98, 255, 0.05)',
+        lineColor: '#2962FF',
+        lineWidth: 2
       });
-
-      // Set up resize observer
-      resizeObserverRef.current = new ResizeObserver(handleResize);
-      resizeObserverRef.current.observe(container);
-
-      // Set up time range change callback
-      if (onVisibleTimeRangeChange) {
-        chart.timeScale().subscribeVisibleTimeRangeChange(range => {
-          if (range) {
-            onVisibleTimeRangeChange({
-              from: range.from as number,
-              to: range.to as number
-            });
-          }
-        });
-      }
-
-      setIsInitialized(true);
-      console.log('Chart initialized successfully');
-
-      return () => {
-        console.log('Cleaning up chart');
-        clearTimeout(crosshairMoveTimeout);
-        cleanup();
-        if (resizeObserverRef.current) {
-          resizeObserverRef.current.unobserve(container);
-        }
-        if (chartRef.current) {
-          chartRef.current.remove();
-          chartRef.current = null;
-        }
-        setIsInitialized(false);
-      };
-    } catch (error) {
-      console.error('Error initializing chart:', error);
     }
-  }, [chartType, symbol, timeframe, chartOptions, compressDataForVisualization, findCandleByTime, onVisibleTimeRangeChange, cleanup, getDataHash]);
 
-  // Optimize data updates with better change detection
-  useEffect(() => {
-    if (!isInitialized || !seriesRef.current || !data || data.length === 0) return;
-    
-    const currentHash = getDataHash(data);
-    const hasDataChanged = data.length !== dataLengthRef.current || currentHash !== lastDataHashRef.current;
-    
-    // Only update if data actually changed and user is not interacting
-    if (hasDataChanged && !isUserInteractingRef.current) {
-      console.log('Updating chart data for', symbol, 'with', data.length, 'candles');
+    // Add volume histogram with optimization
+    const volumeSeries = chart.addHistogramSeries({
+      color: '#26a69a',
+      priceFormat: { type: 'volume' },
+      priceScaleId: ''
+    });
+
+    volumeSeries.priceScale().applyOptions({
+      scaleMargins: { top: 0.8, bottom: 0 },
+      visible: true,
+      autoScale: true
+    });
+
+    // Set data with performance optimization
+    if (data && data.length > 0) {
+      const optimizedData = compressDataForVisualization(data, 1000);
       
-      try {
-        // Use update instead of setData for better performance on small changes
-        if (data.length > dataLengthRef.current) {
-          // New data added - just update the last few candles
-          const newCandles = data.slice(dataLengthRef.current - 1);
-          
-          if (chartType === 'candlestick' || chartType === 'bar') {
-            newCandles.forEach(candle => {
-              seriesRef.current?.update(candle as CandlestickData<Time>);
-            });
-          } else {
-            newCandles.forEach(candle => {
-              seriesRef.current?.update(candle as LineData<Time>);
-            });
-          }
-          
-          // Update volume data
-          if (volumeData && volumeData.length > 0 && volumeSeriesRef.current) {
-            const newVolumeData = volumeData.slice(dataLengthRef.current - 1);
-            newVolumeData.forEach(vol => {
-              volumeSeriesRef.current?.update(vol as HistogramData<Time>);
-            });
-          }
-        } else {
-          // Full data refresh needed
-          throttledUpdate([...data], (optimizedData) => {
-            if (chartType === 'candlestick' || chartType === 'bar') {
-              seriesRef.current?.setData(optimizedData as CandlestickData<Time>[]);
-            } else {
-              seriesRef.current?.setData(optimizedData as LineData<Time>[]);
-            }
-            
-            if (volumeData && volumeData.length > 0 && volumeSeriesRef.current) {
-              const optimizedVolumeData = compressDataForVisualization(volumeData, 1000);
-              volumeSeriesRef.current.setData(optimizedVolumeData as HistogramData<Time>[]);
-            }
+      if (chartType === 'candlestick' || chartType === 'bar') {
+        series?.setData(optimizedData as CandlestickData<Time>[]);
+      } else {
+        series?.setData(optimizedData as LineData<Time>[]);
+      }
+      
+      if (volumeData.length > 0) {
+        const optimizedVolumeData = compressDataForVisualization(volumeData, 1000);
+        volumeSeries.setData(optimizedVolumeData as HistogramData<Time>[]);
+      }
+    }
+
+    seriesRef.current = series || null;
+    volumeSeriesRef.current = volumeSeries;
+    chartRef.current = chart;
+
+    // Optimize crosshair move handler
+    let crosshairMoveTimeout: NodeJS.Timeout;
+    chart.subscribeCrosshairMove((param: MouseEventParams) => {
+      clearTimeout(crosshairMoveTimeout);
+      crosshairMoveTimeout = setTimeout(() => {
+        if (param.point === undefined || !param.time || 
+            param.point.x < 0 || param.point.x > chartContainerRef.current!.clientWidth || 
+            param.point.y < 0 || param.point.y > chartContainerRef.current!.clientHeight) {
+          setHoverData({ time: null, price: null, ohlc: null });
+          return;
+        }
+        
+        const candle = findCandleByTime(param.time);
+        let ohlcData = null;
+        
+        if (candle && 'open' in candle) {
+          const candleWithOHLC = candle as CandlestickData<Time>;
+          ohlcData = {
+            open: candleWithOHLC.open,
+            high: candleWithOHLC.high,
+            low: candleWithOHLC.low,
+            close: candleWithOHLC.close,
+            volume: 'volume' in candleWithOHLC ? candleWithOHLC.volume : undefined
+          };
+        } else if (candle && 'value' in candle) {
+          ohlcData = { close: (candle as LineData<Time>).value };
+        }
+
+        const price = candle ? 'close' in candle ? candle.close : 'value' in candle ? candle.value : null : null;
+        setHoverData({ time: param.time, price: price, ohlc: ohlcData });
+      }, 16); // ~60fps
+    });
+
+    // Set up resize observer
+    resizeObserverRef.current = new ResizeObserver(handleResize);
+    resizeObserverRef.current.observe(chartContainerRef.current);
+
+    // Set up time range change callback
+    if (onVisibleTimeRangeChange) {
+      chart.timeScale().subscribeVisibleTimeRangeChange(range => {
+        if (range) {
+          onVisibleTimeRangeChange({
+            from: range.from as number,
+            to: range.to as number
           });
         }
-        
-        // Update tracking variables
-        dataLengthRef.current = data.length;
-        lastDataHashRef.current = currentHash;
-      } catch (error) {
-        console.error('Error updating chart data:', error);
-      }
+      });
     }
-  }, [data, isInitialized, chartType, throttledUpdate, volumeData, compressDataForVisualization, symbol, getDataHash]);
+
+    setIsInitialized(true);
+
+    return () => {
+      clearTimeout(crosshairMoveTimeout);
+      cleanup();
+      if (resizeObserverRef.current && chartContainerRef.current) {
+        resizeObserverRef.current.unobserve(chartContainerRef.current);
+      }
+      if (chartRef.current) {
+        chartRef.current.remove();
+        chartRef.current = null;
+      }
+    };
+  }, [chartType, height, chartOptions, compressDataForVisualization, findCandleByTime, onVisibleTimeRangeChange, cleanup]);
+
+  // Optimize data updates with throttling
+  useEffect(() => {
+    if (!isInitialized || !seriesRef.current || !volumeSeriesRef.current || !data || data.length === 0) return;
+    
+    throttledUpdate([...data], (optimizedData) => {
+      if (chartType === 'candlestick' || chartType === 'bar') {
+        seriesRef.current?.setData(optimizedData as CandlestickData<Time>[]);
+      } else {
+        seriesRef.current?.setData(optimizedData as LineData<Time>[]);
+      }
+      
+      if (volumeData && volumeData.length > 0) {
+        const optimizedVolumeData = compressDataForVisualization(volumeData, 1000);
+        volumeSeriesRef.current?.setData(optimizedVolumeData as HistogramData<Time>[]);
+      }
+    });
+  }, [data, isInitialized, chartType, throttledUpdate, volumeData, compressDataForVisualization]);
 
   // Format timestamp for display
   const formatTime = useCallback((timestamp: Time | null): string => {
@@ -543,3 +464,5 @@ const Chart: React.FC<ChartProps> = React.memo(({
 Chart.displayName = 'Chart';
 
 export default Chart;
+
+}

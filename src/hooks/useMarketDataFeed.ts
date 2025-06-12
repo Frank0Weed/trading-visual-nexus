@@ -1,11 +1,10 @@
 
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import useWebSocket, { ReadyState } from 'react-use-websocket';
-import { getWebSocketUrl, PriceData, CandleData, testWebSocketConnection } from '../services/apiService';
+import { getWebSocketUrl, PriceData, CandleData } from '../services/apiService';
 import { toast } from '@/components/ui/sonner';
 import { wsOptimizer } from '@/utils/wsOptimization';
 import { dataCache } from '@/services/dataCache';
-import { CandleTimeValidator } from '@/utils/candleTimeValidator';
 
 interface UseMarketDataFeedProps {
   symbols: string[];
@@ -34,8 +33,7 @@ const getCandleStartTime = (timestamp: number, timeframe: string): number => {
 
   const timeframeMinutes: Record<string, number> = {
     'M1': 1, 'M5': 5, 'M15': 15, 'M30': 30,
-    'H1': 60, 'H4': 240, 'D1': 1440, 'W1': 10080, 
-    'MN1': 43200, 'MN': 43200  // Added MN1 and MN alias
+    'H1': 60, 'H4': 240, 'D1': 1440, 'W1': 10080, 'MN1': 43200
   };
 
   const minutes = timeframeMinutes[timeframe] || 1;
@@ -66,13 +64,11 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
   const [latestCandles, setLatestCandles] = useState<Record<string, Record<string, CandleData>>>({});
   const [newCandleEvents, setNewCandleEvents] = useState<Record<string, Record<string, number>>>({});
   const [lastMessageTime, setLastMessageTime] = useState<number>(Date.now());
-  const [connectionTested, setConnectionTested] = useState<boolean>(false);
   
   const subscribedSymbolsRef = useRef<string>('');
   const subscribedTimeframeRef = useRef<string>('');
   const isInitializedRef = useRef<boolean>(false);
   const lastCandleStartTimesRef = useRef<Record<string, Record<string, number>>>({});
-  const processedCandleTimesRef = useRef<Set<number>>(new Set());
   
   // Optimized refs with better memory management
   const lastPriceUpdateRef = useRef<Record<string, { time: number; bid: number; ask: number }>>({});
@@ -82,44 +78,23 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
   const messageQueueRef = useRef<any[]>([]);
   const processingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Test WebSocket connection on mount
-  useEffect(() => {
-    const checkConnection = async () => {
-      console.log('Testing WebSocket connection...');
-      const isConnectable = await testWebSocketConnection();
-      setConnectionTested(true);
-      
-      if (!isConnectable) {
-        console.error('WebSocket server is not reachable at ws://localhost:3000');
-        toast.error('WebSocket server is not reachable. Please ensure your server is running on localhost:3000');
-      } else {
-        console.log('WebSocket server is reachable');
-      }
-    };
-    
-    checkConnection();
-  }, []);
-
   const { sendMessage, lastMessage, readyState } = useWebSocket(getWebSocketUrl(), {
     shouldReconnect: () => true,
     reconnectAttempts: 10,
     reconnectInterval: 3000,
     onOpen: () => {
-      console.log('🟢 WebSocket connection established successfully');
+      console.log('WebSocket connection established');
       toast.success('Market data connection established');
       isInitializedRef.current = false;
     },
-    onError: (event) => {
-      console.error('🔴 WebSocket connection error:', event);
+    onError: () => {
+      console.error('WebSocket connection error');
       toast.error('Market data connection error');
     },
-    onClose: (event) => {
-      console.warn('🟡 WebSocket connection closed:', event.code, event.reason);
+    onClose: () => {
+      console.warn('WebSocket connection closed');
       toast.warning('Market data connection closed, attempting to reconnect...');
       isInitializedRef.current = false;
-    },
-    onMessage: (event) => {
-      console.log('📩 WebSocket message received:', event.data);
     }
   });
 
@@ -131,76 +106,52 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
     [ReadyState.UNINSTANTIATED]: 'Uninstantiated',
   }[readyState];
 
-  // Enhanced subscription with better logging
+  // Optimized subscription with caching
   const subscribeToData = useCallback(() => {
-    if (readyState !== ReadyState.OPEN || symbols.length === 0) {
-      console.log('Skipping subscription - readyState:', readyState, 'symbols:', symbols.length);
-      return;
-    }
+    if (readyState !== ReadyState.OPEN || symbols.length === 0) return;
     
     const symbolsKey = symbols.sort().join(',');
     const needsSubscription = symbolsKey !== subscribedSymbolsRef.current || 
                              currentTimeframe !== subscribedTimeframeRef.current ||
                              !isInitializedRef.current;
     
-    if (!needsSubscription) {
-      console.log('Already subscribed to current symbols and timeframe');
-      return;
+    if (!needsSubscription) return;
+    
+    console.log('Subscribing to live data for symbols:', symbols);
+    
+    // Use cached subscription data if available
+    const subscriptionKey = `subscription:${symbolsKey}:${currentTimeframe}`;
+    
+    if (!dataCache.has(subscriptionKey)) {
+      sendMessage(JSON.stringify({
+        type: 'subscribe_prices',
+        symbols: symbols
+      }));
+      
+      const allTimeframes = ['M1', 'M5', 'M15', 'M30', 'H1', 'H4', 'D1', 'W1', 'MN1'];
+      
+      allTimeframes.forEach(timeframe => {
+        sendMessage(JSON.stringify({
+          type: 'subscribe_candles',
+          symbols: symbols,
+          timeframe: timeframe
+        }));
+      });
+      
+      dataCache.set(subscriptionKey, true, 300000); // Cache for 5 minutes
     }
-    
-    console.log('🔌 Subscribing to live data for symbols:', symbols);
-    
-    // Subscribe to prices
-    const priceSubscription = {
-      type: 'subscribe_prices',
-      symbols: symbols
-    };
-    console.log('Sending price subscription:', priceSubscription);
-    sendMessage(JSON.stringify(priceSubscription));
-    
-    // Subscribe to all supported timeframes including new ones
-    const allTimeframes = ['M1', 'M5', 'M15', 'M30', 'H1', 'H4', 'D1', 'W1', 'MN1', 'MN'];
-    
-    allTimeframes.forEach(timeframe => {
-      const candleSubscription = {
-        type: 'subscribe_candles',
-        symbols: symbols,
-        timeframe: timeframe
-      };
-      console.log(`Sending candle subscription for ${timeframe}:`, candleSubscription);
-      sendMessage(JSON.stringify(candleSubscription));
-    });
     
     subscribedSymbolsRef.current = symbolsKey;
     subscribedTimeframeRef.current = currentTimeframe || '';
     isInitializedRef.current = true;
-    
-    console.log('✅ Subscription requests sent');
   }, [readyState, symbols, currentTimeframe, sendMessage]);
 
-  // Add candle validators for each timeframe including new ones
-  const candleValidators = useMemo(() => {
-    const validators: Record<string, CandleTimeValidator> = {};
-    const timeframes = ['M1', 'M5', 'M15', 'M30', 'H1', 'H4', 'D1', 'W1', 'MN1', 'MN'];
-    
-    timeframes.forEach(tf => {
-      validators[tf] = new CandleTimeValidator(tf, {
-        fillMissing: false, // Don't auto-fill in live feed
-        maxDelay: 120 // 2 minutes max delay for live data
-      });
-    });
-    
-    return validators;
-  }, []);
-
-  // Enhanced message processing with better error handling
+  // Optimized message processing with batching
   const processMessageBatch = useCallback(() => {
     if (messageQueueRef.current.length === 0) return;
     
     const messages = [...messageQueueRef.current];
     messageQueueRef.current = [];
-    
-    console.log(`Processing ${messages.length} queued messages`);
     
     // Group messages by type for batch processing
     const priceUpdates: any[] = [];
@@ -210,7 +161,6 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
     messages.forEach(msg => {
       try {
         const parsedMessage = JSON.parse(msg.data);
-        console.log('Parsed message:', parsedMessage);
         
         if (parsedMessage.type === 'price_update' || parsedMessage.type === 'price_tick') {
           priceUpdates.push(parsedMessage);
@@ -218,17 +168,14 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
           candleUpdates.push(parsedMessage);
         } else if (parsedMessage.type === 'new_candle_open') {
           newCandleNotifications.push(parsedMessage);
-        } else {
-          console.log('Unknown message type:', parsedMessage.type);
         }
       } catch (error) {
-        console.error('Error parsing WebSocket message:', error, 'Raw message:', msg.data);
+        console.error('Error parsing WebSocket message:', error);
       }
     });
     
     // Process price updates in batch
     if (priceUpdates.length > 0) {
-      console.log(`Processing ${priceUpdates.length} price updates`);
       const latestPriceBySymbol = new Map<string, any>();
       
       priceUpdates.forEach(msg => {
@@ -265,7 +212,6 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
           };
           
           lastPriceUpdateRef.current[symbol] = { time: timeNum, bid: bidNum, ask: askNum };
-          console.log(`Updated price for ${symbol}: ${bidNum}/${askNum}`);
         }
       });
       
@@ -276,37 +222,16 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
     
     // Process candle updates in batch
     if (candleUpdates.length > 0) {
-      console.log(`Processing ${candleUpdates.length} candle updates`);
       const candleUpdateBatch: Record<string, Record<string, CandleData>> = {};
       const newCandleEventBatch: Record<string, Record<string, number>> = {};
       
       candleUpdates.forEach(msg => {
         const { symbol, timeframe, data: candleData } = msg;
         
-        if (!candleData || typeof candleData !== 'object') {
-          console.log('Invalid candle data:', candleData);
-          return;
-        }
+        if (!candleData || typeof candleData !== 'object') return;
         
         const candleTime = typeof candleData.time === 'string' ? parseInt(candleData.time, 10) : Number(candleData.time);
-        if (isNaN(candleTime) || candleTime <= 0) {
-          console.log('Invalid candle time:', candleData.time);
-          return;
-        }
-        
-        // Validate candle timing
-        const validator = candleValidators[timeframe];
-        if (validator) {
-          const lastCandleTime = lastCandleStartTimesRef.current[symbol]?.[timeframe];
-          
-          if (lastCandleTime) {
-            const shouldCreate = validator.shouldCreateCandle(lastCandleTime, candleTime);
-            if (!shouldCreate) {
-              console.log(`Rejecting early candle for ${symbol} ${timeframe}. Time: ${candleTime}, Last: ${lastCandleTime}`);
-              return;
-            }
-          }
-        }
+        if (isNaN(candleTime) || candleTime <= 0) return;
         
         const closePrice = parseFloat(candleData.close) || 0;
         
@@ -320,10 +245,7 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
           lastCandle.time === candleTime && 
           lastCandle.close === closePrice;
         
-        if (isDuplicateCandle) {
-          console.log(`Duplicate candle for ${symbol} ${timeframe}`);
-          return;
-        }
+        if (isDuplicateCandle) return;
         
         const candleStartTime = getCandleStartTime(candleTime, timeframe);
         const tickVolume = parseInt(candleData.tick_volume) || parseInt(candleData.volume) || 0;
@@ -354,7 +276,6 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
           }
           newCandleEventBatch[symbol][timeframe] = candleStartTime;
           lastCandleStartTimesRef.current[symbol][timeframe] = candleStartTime;
-          console.log(`🕯️ New ${timeframe} candle for ${symbol}`);
         }
         
         // Prepare candle update
@@ -364,7 +285,6 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
         candleUpdateBatch[symbol][timeframe] = parsedCandle;
         
         lastCandleUpdateRef.current[symbol][timeframe] = { time: candleTime, close: closePrice };
-        console.log(`Updated ${timeframe} candle for ${symbol}: ${closePrice}`);
       });
       
       // Apply all candle updates at once
@@ -402,7 +322,6 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
     // Process new candle notifications
     newCandleNotifications.forEach(msg => {
       const { symbol, timeframe, time } = msg;
-      console.log(`New candle notification: ${symbol} ${timeframe}`);
       
       setNewCandleEvents(prev => ({
         ...prev,
@@ -417,14 +336,13 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
       }
     });
     
-  }, [currentTimeframe, candleValidators]);
+  }, [currentTimeframe]);
 
   // Optimized message handling with queueing
   const handleMessage = useCallback((message: any) => {
     if (!message) return;
     
     setLastMessageTime(Date.now());
-    console.log('📨 Raw WebSocket message received:', message.data);
     
     // Add message to queue
     messageQueueRef.current.push(message);
@@ -449,26 +367,23 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
 
   // Subscribe when connection opens
   useEffect(() => {
-    if (readyState === ReadyState.OPEN && connectionTested) {
-      console.log('WebSocket is open and connection tested, subscribing...');
+    if (readyState === ReadyState.OPEN) {
       subscribeToData();
     }
-  }, [readyState, subscribeToData, connectionTested]);
+  }, [readyState, subscribeToData]);
 
-  // Enhanced heartbeat with logging
+  // Optimized heartbeat with reduced frequency
   useEffect(() => {
     if (readyState !== ReadyState.OPEN) return;
     
     const heartbeatInterval = setInterval(() => {
-      const pingMessage = { type: 'ping', timestamp: Date.now() };
-      console.log('Sending heartbeat:', pingMessage);
-      sendMessage(JSON.stringify(pingMessage));
+      sendMessage(JSON.stringify({ type: 'ping', timestamp: Date.now() }));
       
       const now = Date.now();
       if (now - lastMessageTime > 30000) {
-        console.warn('⚠️ No messages received in 30 seconds');
+        console.warn('No messages received in 30 seconds');
       }
-    }, 30000); // Every 30 seconds
+    }, 30000); // Reduced to every 30 seconds
     
     return () => clearInterval(heartbeatInterval);
   }, [readyState, sendMessage, lastMessageTime]);
@@ -482,14 +397,6 @@ export const useMarketDataFeed = ({ symbols, currentTimeframe }: UseMarketDataFe
       wsOptimizer.cleanup();
     };
   }, []);
-
-  console.log('Current market data state:', {
-    connectionStatus,
-    readyState,
-    pricesCount: Object.keys(prices).length,
-    candlesCount: Object.keys(latestCandles).length,
-    lastMessageTime: new Date(lastMessageTime).toLocaleTimeString()
-  });
 
   return { 
     prices, 
